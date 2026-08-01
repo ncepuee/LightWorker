@@ -1,0 +1,39 @@
+# Copy to %LOCALAPPDATA%\LightWorker\config.toml or use `lightworker init`.
+[runner]
+max_concurrency = 2
+max_tasks_per_plan = 6
+max_delegation_depth = 1
+max_replans = 2
+default_timeout_seconds = 1800
+poll_interval_seconds = 0.25
+allow_dirty_worktree_source = false
+codex_command = "codex"
+codex_ignore_user_config = true
+# Safe default: workers do not inherit user MCP servers or sandbox defaults.
+# Set false only as an explicit unsafe compatibility opt-in; user MCP tools may have external side effects.
+# For an isolated CLIProxyAPI/OpenCodex worker, keep true and configure both fields below.
+# codex_base_url = "http://127.0.0.1:10100/v1"
+# codex_model_catalog = "C:\\Users\\you\\.codex\\opencodex-catalog.json"
+
+[models]
+planner = "gpt-5.6-sol"
+explore = "deepseek/deepseek-v4-flash"
+execute = "gpt-5.6-sol"
+review = "gpt-5.6-sol"
+fast = "deepseek/deepseek-v4-flash"
+reasoning = "gpt-5.6-sol"
+
+[policy]
+allowed_models = [
+  "gpt-5.5",
+  "gpt-5.6-luna",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "deepseek/deepseek-v4-flash",
+  "deepseek/deepseek-v4-pro",
+  "google-antigravity/gemini-3.6-flash",
+  "google-antigravity/claude-sonnet-4-6",
+  "google-antigravity/claude-opus-4-6-thinking",
+  "cursor/kimi-k2.7-code",
+  "cursor/grok-4.5"
+]

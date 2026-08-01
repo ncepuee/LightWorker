@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="lightworker-token" content="__LIGHTWORKER_TOKEN__">
+  <meta name="theme-color" content="#0b0d12">
+  <title>LightWorker Console</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="apple-touch-icon" href="/lightworker-app-icon.png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark"><img src="/logo.svg" alt="" width="40" height="40"></div>
+        <div><strong>LightWorker</strong><span>Agent Control Plane</span></div>
+      </div>
+      <nav aria-label="任务状态过滤">
+        <button class="nav-item active" data-status=""><span>全部任务</span><b id="nav-all">0</b></button>
+        <button class="nav-item" data-status="running"><span>正在运行</span><b id="nav-running">0</b></button>
+        <button class="nav-item" data-status="queued"><span>等待调度</span><b id="nav-queued">0</b></button>
+        <button class="nav-item" data-status="awaiting_approval"><span>需要审批</span><b id="nav-approval">0</b></button>
+        <button class="nav-item" data-status="completed"><span>已完成</span><b id="nav-completed">0</b></button>
+        <button class="nav-item" data-status="failed"><span>异常任务</span><b id="nav-failed">0</b></button>
+      </nav>
+      <div class="sidebar-note">
+        <span class="eyebrow">安全模式</span>
+        <strong>默认只读</strong>
+        <p>写任务进入独立 worktree，并在 auto_readonly 下等待审批。</p>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <span class="eyebrow">本地协作编排</span>
+          <h1>任务控制台</h1>
+        </div>
+        <div class="top-actions">
+          <span class="health-chip" id="proxy-health"><i></i>正在检查代理</span>
+          <button class="button ghost" id="refresh-button">刷新</button>
+          <button class="button primary" id="new-task-button">新建任务</button>
+        </div>
+      </header>
+
+      <section class="metrics" aria-label="任务统计">
+        <article><span>任务总数</span><strong id="metric-total">0</strong><small>当前状态库</small></article>
+        <article><span>活跃 Worker</span><strong id="metric-active">0</strong><small id="metric-capacity">并发上限 2</small></article>
+        <article><span>待审批</span><strong id="metric-approval">0</strong><small>写入前人工确认</small></article>
+        <article><span>完成率</span><strong id="metric-rate">—</strong><small>排除排队任务</small></article>
+      </section>
+
+      <section class="panel task-panel">
+        <div class="panel-header">
+          <div><span class="eyebrow">Task Board</span><h2>协作任务</h2></div>
+          <label class="search"><span>⌕</span><input id="search-input" type="search" placeholder="搜索目标、模型或任务 ID"></label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>任务</th><th>角色 / 模型</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+            <tbody id="task-body"></tbody>
+          </table>
+          <div class="empty" id="empty-state" hidden>
+            <div class="empty-icon"><img src="/logo.svg" alt="" width="54" height="54"></div><strong>暂时没有任务</strong><p>创建一个自动规划目标，或提交单个只读 Worker。</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="task-dialog" class="modal">
+    <form method="dialog" class="modal-card" id="task-form-shell">
+      <div class="modal-header">
+        <div><span class="eyebrow">Dispatch</span><h2>创建协作任务</h2></div>
+        <button type="button" class="icon-button" id="close-task-dialog" aria-label="关闭">×</button>
+      </div>
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab active" data-tab="orchestrate">自动规划</button>
+        <button type="button" class="tab" data-tab="single">单个 Worker</button>
+      </div>
+
+      <div class="tab-pane active" id="pane-orchestrate">
+        <label>目标<textarea id="orchestrate-objective" rows="5" required placeholder="例如：检查登录模块的可靠性，拆成并行只读调查并汇总证据。"></textarea></label>
+        <div class="form-grid">
+          <label>工作区<input id="orchestrate-workspace" required placeholder="C:\path\to\project"></label>
+          <label>执行模式<select id="orchestrate-mode"><option value="auto_readonly">auto_readonly（推荐）</option><option value="plan_only">plan_only</option><option value="auto_execute">auto_execute</option></select></label>
+          <label>Planner 模型<select id="orchestrate-model"></select></label>
+          <label>最大子任务<input id="orchestrate-max" type="number" min="1" max="6" value="6"></label>
+        </div>
+        <button type="button" class="button primary wide" id="submit-orchestrate">生成任务 DAG</button>
+      </div>
+
+      <div class="tab-pane" id="pane-single">
+        <label>任务目标<textarea id="single-objective" rows="5" required placeholder="给 Worker 一个边界清楚、可验证的目标。"></textarea></label>
+        <div class="form-grid">
+          <label>工作区<input id="single-workspace" required placeholder="C:\path\to\project"></label>
+          <label>角色<select id="single-kind"><option value="explore">Explorer</option><option value="review">Reviewer</option><option value="execute">Executor</option></select></label>
+          <label>模型<select id="single-model"></select></label>
+          <label>推理强度<select id="single-effort"><option>low</option><option selected>medium</option><option>high</option><option>xhigh</option></select></label>
+          <label>执行模式<select id="single-mode"><option value="auto_readonly">auto_readonly（推荐）</option><option value="plan_only">plan_only</option><option value="auto_execute">auto_execute</option></select></label>
+          <label>超时（秒）<input id="single-timeout" type="number" min="10" max="86400" value="1800"></label>
+        </div>
+        <label>成功条件<input id="single-success" placeholder="例如：列出文件证据并给出可复现命令"></label>
+        <button type="button" class="button primary wide" id="submit-single">提交 Worker</button>
+      </div>
+    </form>
+  </dialog>
+
+  <aside class="drawer" id="task-drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <div><span class="eyebrow" id="detail-kind">Task</span><h2 id="detail-title">任务详情</h2></div>
+      <button class="icon-button" id="close-drawer" aria-label="关闭">×</button>
+    </div>
+    <div class="detail-meta" id="detail-meta"></div>
+    <div class="detail-actions" id="detail-actions"></div>
+    <section><h3>目标</h3><p class="objective" id="detail-objective"></p></section>
+    <section><h3>结构化结果</h3><pre id="detail-result">等待 Worker 返回…</pre></section>
+    <section><h3>事件时间线</h3><div class="timeline" id="detail-events"></div></section>
+  </aside>
+  <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

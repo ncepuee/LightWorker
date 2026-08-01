@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">LightWorker 汇流执行核标志</title>
+  <desc id="desc">三个 Agent 节点通过任务图汇入执行核心，再输出一个完成节点</desc>
+  <g fill="none" stroke="#31D0AA" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M16 14L22 26"/>
+    <path d="M16 32H20"/>
+    <path d="M16 50L22 38"/>
+    <path d="M44 32H48"/>
+  </g>
+  <g fill="#31D0AA">
+    <circle cx="12" cy="14" r="4"/>
+    <circle cx="12" cy="32" r="4"/>
+    <circle cx="12" cy="50" r="4"/>
+    <circle cx="52" cy="32" r="4"/>
+  </g>
+  <path d="M32 20L42 26Q44 27.2 44 29.5V34.5Q44 36.8 42 38L32 44L22 38Q20 36.8 20 34.5V29.5Q20 27.2 22 26Z" fill="#7C5CFF" stroke="#A997FF" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M29.5 27L37 32L29.5 37Z" fill="#EDF1F8"/>
+</svg>
