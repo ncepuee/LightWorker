@@ -1,34 +1,54 @@
 <p align="center">
-  <img src="lightworker/web/lightworker-app-icon.png" alt="LightWorker logo" width="160">
+  <img src="lightworker/web/logo.svg" alt="LightWorker task graph converging into an execution core" width="112">
 </p>
 
-# LightWorker
+<h1 align="center">LightWorker</h1>
+
+<p align="center"><strong>Local-first multi-agent delegation and approval control for Codex.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/ncepuee/LightWorker/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ncepuee/LightWorker/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/ncepuee/LightWorker/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/ncepuee/LightWorker?display_name=tag&sort=semver"></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-31D0AA.svg"></a>
+</p>
+
+<p align="center">
+  <a href="#安装">安装</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#本地管理页">Web Console</a> ·
+  <a href="#接入-codex-mcp">Codex MCP</a> ·
+  <a href="SECURITY.md">安全策略</a> ·
+  <a href="https://github.com/ncepuee/LightWorker/releases">Releases</a> ·
+  <a href="CONTRIBUTING.md">贡献</a>
+</p>
 
 LightWorker 是一个本地优先、零第三方 Python 运行时依赖的轻量多 Agent Worker Runner。它让 Codex 通过 MCP 提交任务，用 SQLite 保存任务 DAG，通过 `codex exec --json` 执行 Worker，并对写任务使用独立 git worktree。
 
-第一版重点是可靠的协作原语，并提供一个无需前端构建链的本地管理页：
+> **项目状态：** `v0.1.0` 是首个公开版本。LightWorker 默认只监听本机回环地址，不自动 commit、merge、push 或发布；写任务需要审批并在独立 worktree 中运行。
 
-- Lead Codex 自动生成依赖任务图。
-- Explorer、Executor、Reviewer 采用明确角色和结构化结果。
-- `auto_readonly` 默认自动运行只读任务，将写任务停在审批状态。
-- Codex、DeepSeek V4、Claude、Gemini 等模型通过现有 Codex/CLIProxyAPI 模型目录选择。
-- SQLite WAL 保存任务、依赖、事件、PID、结果和 worktree。
-- MCP Server 与 CLI 使用同一套调度器和状态库。
-- Worker 取消会终止完整进程树。
-- 本地管理页可创建、筛选、审批、取消任务，并查看结果与事件流。
-- 不允许 `danger-full-access`，不自动提交、推送或合并。
+## 核心能力
 
-## 设计来源
+| 能力 | 作用 |
+|---|---|
+| 持久任务 DAG | SQLite WAL 保存任务、依赖、事件、PID、结果和 worktree 信息 |
+| 自动分解与并行 | Lead Codex 生成有向无环任务图，独立只读 Worker 可并行运行 |
+| 推理感知路由 | 机械任务默认交给 DeepSeek V4 Flash，复杂任务交给 OpenAI 智能体 |
+| 审批与隔离 | `auto_readonly` 自动执行只读任务，写任务等待审批并进入独立 git worktree |
+| 三种控制面 | CLI、Codex MCP 与本地 Web Console 共用同一调度器和状态库 |
+| 本地优先安全 | 禁止 `danger-full-access`，默认隔离用户 MCP，不自动 commit、merge、push 或发布 |
 
-LightWorker 吸收了这些项目最实用的机制：
+## 安全默认值
 
-- OpenHands：后端、工作区、自动化控制面。
-- AionUi：Lead/Teammate、任务板、异步协作。
-- Delegate：git worktree、Reviewer、Merge Worker 思路。
-- Cindy：明确区分创建、排队、派发和完成。
-- OpenWorker：新鲜上下文、短生命周期、只读探索。
+| 边界 | 默认行为 |
+|---|---|
+| Web Console | 仅允许字面回环地址 `127.0.0.1` / `::1` |
+| 只读任务 | 可在 `auto_readonly` 下自动运行 |
+| 写任务 | 人工审批，并使用独立 git worktree |
+| 用户 Codex 配置 | Worker 默认忽略，避免继承外部写入 MCP |
+| Git 与外部系统 | 不自动 commit、merge、push、发布或授予 `danger-full-access` |
 
-它不依赖这些项目，也不要求安装其中任何一个。
+完整威胁模型与漏洞报告方式见 [SECURITY.md](SECURITY.md)。
 
 ## 要求
 
@@ -42,44 +62,44 @@ LightWorker 吸收了这些项目最实用的机制：
 
 ## 安装
 
-从 GitHub 克隆后安装：
+推荐直接安装 Release 中经过 CI 验证的通用 wheel：
 
 ```bash
-git clone https://github.com/ncepuee/LightWorker.git
-cd LightWorker
-python -m pip install .
+python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.1.0/lightworker-0.1.0-py3-none-any.whl
+lightworker init
+lightworker doctor
 ```
 
-也可以从 GitHub Release 下载 wheel 后安装：
+发布资产的 SHA-256 见 [`SHA256SUMS.txt`](SHA256SUMS.txt)。开发或审计源码时可固定 Tag 安装：
 
 ```bash
-python -m pip install lightworker-0.1.0-py3-none-any.whl
+git clone --branch v0.1.0 --depth 1 https://github.com/ncepuee/LightWorker.git
+cd LightWorker
+python -m pip install -e .
 ```
 
 ## 快速开始
 
-在项目目录中直接运行，不必安装依赖：
+安装后可直接运行：
 
 ```powershell
-Set-Location C:\path\to\lightworker
 $env:LIGHTWORKER_HOME = "$env:LOCALAPPDATA\LightWorker"
-python -m lightworker init
-python -m lightworker doctor
+lightworker init
+lightworker doctor
 ```
 
 macOS / Linux：
 
 ```bash
-cd /path/to/lightworker
 export LIGHTWORKER_HOME="${XDG_STATE_HOME:-$HOME/.local/state}/lightworker"
-python -m lightworker init
-python -m lightworker doctor
+lightworker init
+lightworker doctor
 ```
 
 本机 CLIProxyAPI/OpenCodex 配置建议使用隔离初始化：
 
 ```powershell
-python -m lightworker init --force --isolated-codex `
+lightworker init --force --isolated-codex `
   --codex-base-url "http://127.0.0.1:10100/v1" `
   --model-catalog "$env:USERPROFILE\.codex\opencodex-catalog.json"
 ```
@@ -87,7 +107,7 @@ python -m lightworker init --force --isolated-codex `
 提交一个 DeepSeek V4 Flash 只读调查：
 
 ```powershell
-python -m lightworker submit `
+lightworker submit `
   --workspace "C:\path\to\project" `
   --kind explore `
   --model "deepseek/deepseek-v4-flash" `
@@ -98,14 +118,14 @@ python -m lightworker submit `
 让 Lead Codex 自动拆任务：
 
 ```powershell
-python -m lightworker orchestrate `
+lightworker orchestrate `
   --workspace "C:\path\to\project" `
   --mode auto_readonly `
   --run `
   "定位登录接口偶发500的原因，并给出经过证据支持的修复计划"
 ```
 
-模型路由：
+v0.1.0 示例默认路由：
 
 | 任务类型 | 默认模型 |
 |---|---|
@@ -256,6 +276,7 @@ lightworker mcp-config
 
 ```text
 queued → starting → running → completed
+                    └→ finishing → completed  (Planner)
                            ├→ failed
                            ├→ cancelled
                            └→ blocked
@@ -264,6 +285,20 @@ awaiting_approval → queued
 ```
 
 Runner 重启时，遗留的 `starting/running` 任务会标记为 `orphaned`，避免悄悄重复执行写任务。
+
+## 致谢与设计来源
+
+LightWorker 吸收了这些项目最实用的机制：
+
+- OpenHands：后端、工作区、自动化控制面。
+- AionUi：Lead/Teammate、任务板、异步协作。
+- Delegate：git worktree、Reviewer、Merge Worker 思路。
+- Cindy：明确区分创建、排队、派发和完成。
+- OpenWorker：新鲜上下文、短生命周期、只读探索。
+
+它不依赖这些项目，也不要求安装其中任何一个。
+
+项目入口：[Changelog](CHANGELOG.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/ncepuee/LightWorker/issues) · [Releases](https://github.com/ncepuee/LightWorker/releases)
 
 ## 当前边界
 
