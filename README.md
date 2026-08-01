@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="lightworker/web/lightworker-app-icon.png" alt="LightWorker logo" width="160">
+</p>
+
 # LightWorker
 
 LightWorker 是一个本地优先、零第三方 Python 运行时依赖的轻量多 Agent Worker Runner。它让 Codex 通过 MCP 提交任务，用 SQLite 保存任务 DAG，通过 `codex exec --json` 执行 Worker，并对写任务使用独立 git worktree。
