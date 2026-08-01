@@ -27,7 +27,7 @@
 
 LightWorker is a lightweight, local-first multi-agent task runner with no third-party Python runtime dependencies. It lets Codex submit tasks through MCP, persists the task DAG in SQLite, executes Workers with `codex exec --json`, and uses an isolated Git worktree for write tasks.
 
-> **Project status:** `v0.1.0` is the first public release. By default, LightWorker listens only on the local loopback address and does not automatically commit, merge, push, or publish; write tasks require approval and run in an isolated Git worktree.
+> **Project status:** `v0.1.1` is the current release; `v0.1.0` was the first public release. By default, LightWorker listens only on the local loopback address and does not automatically commit, merge, push, or publish; write tasks require approval and run in an isolated Git worktree.
 
 ## Core Capabilities
 
@@ -38,6 +38,7 @@ LightWorker is a lightweight, local-first multi-agent task runner with no third-
 | Reasoning-aware routing | Mechanical tasks go to DeepSeek V4 Flash by default; complex tasks use `gpt-5.6-sol` |
 | Approval and isolation | `auto_readonly` runs read-only tasks automatically; write tasks wait for approval and enter an isolated Git worktree |
 | Three control surfaces | CLI, Codex MCP, and the local Web Console share the same scheduler and state store |
+| Cache-aware prompts | Stable Prompt Protocol v2 prefixes, content-free cohort fingerprints, and normalized provider cache-usage events |
 | Local-first security | `danger-full-access` is prohibited; user MCP servers are isolated by default; no automatic commit, merge, push, or publish |
 
 ## Secure Defaults
@@ -64,10 +65,10 @@ The local development verification environment is Python 3.13, Git 2.51, Codex C
 
 ## Installation
 
-Install the CI-verified universal wheel directly from the v0.1.0 GitHub release:
+Install the CI-verified universal wheel directly from the v0.1.1 GitHub release:
 
 ```bash
-python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.1.0/lightworker-0.1.0-py3-none-any.whl
+python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.1.1/lightworker-0.1.1-py3-none-any.whl
 lightworker init
 lightworker doctor
 ```
@@ -75,7 +76,7 @@ lightworker doctor
 SHA-256 checksums for release assets are listed in [`SHA256SUMS.txt`](SHA256SUMS.txt). When developing or auditing the source, you can install from a pinned tag:
 
 ```bash
-git clone --branch v0.1.0 --depth 1 https://github.com/ncepuee/LightWorker.git
+git clone --branch v0.1.1 --depth 1 https://github.com/ncepuee/LightWorker.git
 cd LightWorker
 python -m pip install -e .
 ```
@@ -127,7 +128,7 @@ lightworker orchestrate `
   "Find the cause of intermittent HTTP 500 errors in the login endpoint and provide an evidence-backed remediation plan."
 ```
 
-Example default routing in v0.1.0:
+Example default routing in v0.1.1:
 
 | Task type | Default model |
 |---|---|
@@ -188,6 +189,12 @@ Isolation is the default security boundary, not just a performance option: unatt
 LightWorker does not store API keys for model services directly. It invokes the local Codex CLI and can connect to OpenAI or a compatible gateway through Codex's model catalog. When using a local gateway such as CLIProxyAPI, we recommend listening only on the loopback address and keeping authentication files in the user configuration directory, not in the project repository.
 
 The default routing is only a starting point: `low`-reasoning tasks go to DeepSeek V4 Flash, while complex planning, coding, and review go to `gpt-5.6-sol`. All available models remain controlled by the allowlist in `config.toml`.
+
+## Provider Cache Observability
+
+Prompt Protocol v2 places the stable safety, output, and role contract before task-specific content and serializes lists and routing policies deterministically. Compatible gateways can therefore reuse a longer exact prefix across independent short-lived Workers. LightWorker keeps `--ephemeral` enabled and does not share conversations or tool state.
+
+Each run writes a `worker.prompt` event containing content-free SHA-256 fingerprints for the full prompt, stable prefix, schema, gateway, and cache cohort. These deterministic fingerprints avoid logging the source text, but they are not an anonymity mechanism. When a terminal Codex event reports supported usage fields, LightWorker also writes one normalized `worker.usage` event with input, cached, uncached, output, and total token counts plus the cache hit rate. These events do not include prompt text, objectives, workspace paths, gateway URLs, model catalogs, or credentials.
 
 ## Privacy and Local State
 

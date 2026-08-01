@@ -27,7 +27,7 @@
 
 LightWorker 是一个本地优先、零第三方 Python 运行时依赖的轻量多 Agent Worker Runner。它让 Codex 通过 MCP 提交任务，用 SQLite 保存任务 DAG，通过 `codex exec --json` 执行 Worker，并对写任务使用独立 git worktree。
 
-> **项目状态：** `v0.1.0` 是首个公开版本。LightWorker 默认只监听本机回环地址，不自动 commit、merge、push 或发布；写任务需要审批并在独立 worktree 中运行。
+> **项目状态：** `v0.1.1` 是当前版本，`v0.1.0` 是首个公开版本。LightWorker 默认只监听本机回环地址，不自动 commit、merge、push 或发布；写任务需要审批并在独立 worktree 中运行。
 
 ## 核心能力
 
@@ -38,6 +38,7 @@ LightWorker 是一个本地优先、零第三方 Python 运行时依赖的轻量
 | 推理感知路由 | 机械任务默认交给 DeepSeek V4 Flash，复杂任务交给 OpenAI 智能体 |
 | 审批与隔离 | `auto_readonly` 自动执行只读任务，写任务等待审批并进入独立 git worktree |
 | 三种控制面 | CLI、Codex MCP 与本地 Web Console 共用同一调度器和状态库 |
+| 缓存友好提示 | 稳定的 Prompt Protocol v2 前缀、不含正文的 cohort 指纹与规范化 Provider 缓存用量事件 |
 | 本地优先安全 | 禁止 `danger-full-access`，默认隔离用户 MCP，不自动 commit、merge、push 或发布 |
 
 ## 安全默认值
@@ -67,7 +68,7 @@ LightWorker 是一个本地优先、零第三方 Python 运行时依赖的轻量
 推荐直接安装 Release 中经过 CI 验证的通用 wheel：
 
 ```bash
-python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.1.0/lightworker-0.1.0-py3-none-any.whl
+python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.1.1/lightworker-0.1.1-py3-none-any.whl
 lightworker init
 lightworker doctor
 ```
@@ -75,7 +76,7 @@ lightworker doctor
 发布资产的 SHA-256 见 [`SHA256SUMS.txt`](SHA256SUMS.txt)。开发或审计源码时可固定 Tag 安装：
 
 ```bash
-git clone --branch v0.1.0 --depth 1 https://github.com/ncepuee/LightWorker.git
+git clone --branch v0.1.1 --depth 1 https://github.com/ncepuee/LightWorker.git
 cd LightWorker
 python -m pip install -e .
 ```
@@ -127,7 +128,7 @@ lightworker orchestrate `
   "定位登录接口偶发500的原因，并给出经过证据支持的修复计划"
 ```
 
-v0.1.0 示例默认路由：
+v0.1.1 示例默认路由：
 
 | 任务类型 | 默认模型 |
 |---|---|
@@ -188,6 +189,12 @@ codex_model_catalog = "C:\\Users\\you\\.codex\\opencodex-catalog.json"
 LightWorker 不直接保存模型服务的 API Key。它调用本机 Codex CLI，并可通过 Codex 的模型目录连接 OpenAI 或兼容网关。使用 CLIProxyAPI 等本地网关时，建议只监听回环地址，并将认证文件保留在用户配置目录，不要放入项目仓库。
 
 默认路由只是起点：`low` 推理任务交给 DeepSeek V4 Flash，复杂规划、编码与审查交给 `gpt-5.6-sol`。所有可用模型仍受 `config.toml` 中的白名单控制。
+
+## Provider 缓存观测
+
+Prompt Protocol v2 把稳定的安全、输出和角色协议放在任务特定内容之前，并对列表和路由策略做确定性序列化。兼容网关因此可以在彼此独立的短生命周期 Worker 之间复用更长的精确前缀。LightWorker 仍保留 `--ephemeral`，不会共享对话或工具状态。
+
+每次运行都会写入 `worker.prompt` 事件，其中包含完整提示、稳定前缀、Schema、网关和缓存 cohort 的 SHA-256 指纹，不记录对应正文。这些确定性指纹不是匿名机制。当 Codex 的终止事件返回受支持的 usage 字段时，还会写入一条规范化 `worker.usage` 事件，包含输入、缓存命中、未命中、输出、总 Token 数和缓存命中率。新事件不包含提示词正文、任务目标、工作区路径、网关 URL、模型目录或凭据。
 
 ## 隐私与本地状态
 

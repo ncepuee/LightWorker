@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -22,7 +23,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
-        python-version: ['3.11', '3.13']
+        python-version: ['3.11', '3.12', '3.13']
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -55,18 +56,32 @@ jobs:
         run: python -m pip install build==1.5.0 twine==6.2.0
       - name: Build wheel and sdist
         run: python -m build
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python - <<'PY'
+          import os
+          import lightworker
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          assert tag == f"v{lightworker.__version__}", (tag, lightworker.__version__)
+          PY
       - name: Check distributions with twine
         run: twine check dist/*
       - name: Install wheel into a clean virtual environment
         run: |
           python -m venv .venv-wheeltest
           .venv-wheeltest/bin/python -m pip install dist/*.whl
+      - name: Install sdist into a second clean virtual environment
+        run: |
+          python -m venv .venv-sdisttest
+          .venv-sdisttest/bin/python -m pip install dist/*.tar.gz
       - name: Verify CLI and installed resources
         run: |
           set -euo pipefail
           .venv-wheeltest/bin/lightworker --help >/dev/null
-          .venv-wheeltest/bin/python -m lightworker --help >/dev/null
-          .venv-wheeltest/bin/python - <<'PY'
+          .venv-wheeltest/bin/python -I -m lightworker --help >/dev/null
+          .venv-wheeltest/bin/python -I - <<'PY'
           import importlib.metadata as md
           from pathlib import Path
           import lightworker
@@ -87,6 +102,8 @@ jobs:
           assert lightworker.__version__ == md.version("lightworker")
           print("installed package resources verified")
           PY
+          .venv-sdisttest/bin/lightworker --help >/dev/null
+          .venv-sdisttest/bin/python -I -c "import importlib.metadata as md, lightworker; assert lightworker.__version__ == md.version('lightworker')"
       - name: Upload distributions
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
