@@ -1,3 +1,4 @@
+
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -24,9 +25,13 @@
             "items": { "type": "string" }
           },
           "model": { "type": "string" },
+          "profile": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
           "reasoning_effort": {
             "type": "string",
-            "enum": ["low", "medium", "high", "xhigh"]
+            "enum": ["low", "medium", "high", "xhigh", "max"]
           },
           "timeout_seconds": {
             "type": "integer",
@@ -51,8 +56,6 @@
           "kind",
           "objective",
           "dependencies",
-          "model",
-          "reasoning_effort",
           "timeout_seconds",
           "allowed_paths",
           "prohibited_actions",

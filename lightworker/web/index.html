@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="zh-CN">
 <head>
@@ -51,6 +52,20 @@
         <article><span>活跃 Worker</span><strong id="metric-active">0</strong><small id="metric-capacity">并发上限 2</small></article>
         <article><span>待审批</span><strong id="metric-approval">0</strong><small>写入前人工确认</small></article>
         <article><span>完成率</span><strong id="metric-rate">—</strong><small>排除排队任务</small></article>
+        <article><span>DeepSeek 暖缓存</span><strong id="metric-cache">—</strong><small id="metric-cache-detail">样本不足</small></article>
+      </section>
+
+      <section class="panel cache-panel">
+        <div class="panel-header">
+          <div><span class="eyebrow">Cache Lab</span><h2>DeepSeek 缓存 Cohort</h2></div>
+          <span class="health-chip" id="cache-target"><i></i>等待样本</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cohort</th><th>路径 / 模型</th><th>状态</th><th>样本</th><th>命中率</th></tr></thead>
+            <tbody id="cache-cohort-body"></tbody>
+          </table>
+        </div>
       </section>
 
       <section class="panel task-panel">
@@ -88,8 +103,11 @@
           <label>工作区<input id="orchestrate-workspace" required placeholder="C:\path\to\project"></label>
           <label>执行模式<select id="orchestrate-mode"><option value="auto_readonly">auto_readonly（推荐）</option><option value="plan_only">plan_only</option><option value="auto_execute">auto_execute</option></select></label>
           <label>Planner 模型<select id="orchestrate-model"></select></label>
+          <label>Planner Profile<select id="orchestrate-profile"></select></label>
+          <label>网关<select id="orchestrate-gateway"></select></label>
           <label>最大子任务<input id="orchestrate-max" type="number" min="1" max="6" value="6"></label>
         </div>
+        <label>共享 Context Pack（可选，最多 32KiB）<textarea id="orchestrate-context-pack" rows="4" placeholder="仅填写多次任务都需要的稳定、已审阅上下文；不要填密钥或动态日志。"></textarea></label>
         <button type="button" class="button primary wide" id="submit-orchestrate">生成任务 DAG</button>
       </div>
 
@@ -98,12 +116,15 @@
         <div class="form-grid">
           <label>工作区<input id="single-workspace" required placeholder="C:\path\to\project"></label>
           <label>角色<select id="single-kind"><option value="explore">Explorer</option><option value="review">Reviewer</option><option value="execute">Executor</option></select></label>
+          <label>Worker Profile<select id="single-profile"></select></label>
           <label>模型<select id="single-model"></select></label>
-          <label>推理强度<select id="single-effort"><option>low</option><option selected>medium</option><option>high</option><option>xhigh</option></select></label>
+          <label>网关<select id="single-gateway"></select></label>
+          <label>推理强度<select id="single-effort"><option value="">按 Profile / 自动路由</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option></select></label>
           <label>执行模式<select id="single-mode"><option value="auto_readonly">auto_readonly（推荐）</option><option value="plan_only">plan_only</option><option value="auto_execute">auto_execute</option></select></label>
           <label>超时（秒）<input id="single-timeout" type="number" min="10" max="86400" value="1800"></label>
         </div>
         <label>成功条件<input id="single-success" placeholder="例如：列出文件证据并给出可复现命令"></label>
+        <label>共享 Context Pack（可选，最多 32KiB）<textarea id="single-context-pack" rows="4" placeholder="相同 Cohort 的 Worker 使用完全相同的稳定上下文。"></textarea></label>
         <button type="button" class="button primary wide" id="submit-single">提交 Worker</button>
       </div>
     </form>
@@ -117,6 +138,8 @@
     <div class="detail-meta" id="detail-meta"></div>
     <div class="detail-actions" id="detail-actions"></div>
     <section><h3>目标</h3><p class="objective" id="detail-objective"></p></section>
+    <section><h3>路由审计</h3><pre id="detail-route">等待调度…</pre></section>
+    <section><h3>预算与 Schema</h3><pre id="detail-governance">尚无运行数据…</pre></section>
     <section><h3>结构化结果</h3><pre id="detail-result">等待 Worker 返回…</pre></section>
     <section><h3>事件时间线</h3><div class="timeline" id="detail-events"></div></section>
   </aside>

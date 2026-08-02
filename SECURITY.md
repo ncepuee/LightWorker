@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes target the latest `0.1.x` release.
+Security fixes target the latest `0.2.x` release.
 
 ## Reporting a vulnerability
 
@@ -17,4 +17,6 @@ Reports are handled on a best-effort basis. Public disclosure should wait until 
 - SQLite state, results, worktrees and user configuration use a default location outside the source tree. Common local-state paths are excluded from version control; custom state paths remain the operator's responsibility.
 - Read-only workers are sandboxed; write tasks use isolated Git worktrees and approval policy.
 - Workers ignore user-level Codex configuration by default so unattended tasks cannot inherit external-write MCP tools. Disabling `codex_ignore_user_config` is an explicit unsafe compatibility opt-in.
+- Context Packs are explicit, size-bounded, credential-screened, JSON-encoded untrusted reference data. Their content is excluded from public task responses and cache telemetry.
+- Cache target certification is limited to route-verified warm samples from one strict Cache Cohort v2 identity; gateways, profiles, schemas, and Context Packs are never merged to claim success.
 - LightWorker does not automatically commit, merge, push, publish or grant `danger-full-access`.

@@ -27,7 +27,7 @@
 
 LightWorker 是一个本地优先、零第三方 Python 运行时依赖的轻量多 Agent Worker Runner。它让 Codex 通过 MCP 提交任务，用 SQLite 保存任务 DAG，通过 `codex exec --json` 执行 Worker，并对写任务使用独立 git worktree。
 
-> **项目状态：** `v0.1.1` 是当前版本，`v0.1.0` 是首个公开版本。LightWorker 默认只监听本机回环地址，不自动 commit、merge、push 或发布；写任务需要审批并在独立 worktree 中运行。
+> **项目状态：** `v0.2.0` 是当前版本，新增基于 Profile 的双网关委派与可度量的 DeepSeek Cache Lab。LightWorker 默认只监听本机回环地址，不自动 commit、merge、push 或发布；写任务需要审批并在独立 worktree 中运行。
 
 ## 核心能力
 
@@ -38,7 +38,8 @@ LightWorker 是一个本地优先、零第三方 Python 运行时依赖的轻量
 | 推理感知路由 | 机械任务默认交给 DeepSeek V4 Flash，复杂任务交给 OpenAI 智能体 |
 | 审批与隔离 | `auto_readonly` 自动执行只读任务，写任务等待审批并进入独立 git worktree |
 | 三种控制面 | CLI、Codex MCP 与本地 Web Console 共用同一调度器和状态库 |
-| 缓存友好提示 | 稳定的 Prompt Protocol v2 前缀、不含正文的 cohort 指纹与规范化 Provider 缓存用量事件 |
+| 可度量缓存优化 | Prompt Protocol v4、Cache Cohort v2 严格隔离、显式 Context Pack、缓存亲和调度与已核验暖缓存指标 |
+| 双网关 Profile | Planner、快速执行、深度执行和审查 Profile 可经 OpenCodex 或 CLIProxyAPI 路由，并保留备用线路与路由审计 |
 | 本地优先安全 | 禁止 `danger-full-access`，默认隔离用户 MCP，不自动 commit、merge、push 或发布 |
 
 ## 安全默认值
@@ -68,7 +69,7 @@ LightWorker 是一个本地优先、零第三方 Python 运行时依赖的轻量
 推荐直接安装 Release 中经过 CI 验证的通用 wheel：
 
 ```bash
-python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.1.1/lightworker-0.1.1-py3-none-any.whl
+python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.2.0/lightworker-0.2.0-py3-none-any.whl
 lightworker init
 lightworker doctor
 ```
@@ -76,7 +77,7 @@ lightworker doctor
 发布资产的 SHA-256 见 [`SHA256SUMS.txt`](SHA256SUMS.txt)。开发或审计源码时可固定 Tag 安装：
 
 ```bash
-git clone --branch v0.1.1 --depth 1 https://github.com/ncepuee/LightWorker.git
+git clone --branch v0.2.0 --depth 1 https://github.com/ncepuee/LightWorker.git
 cd LightWorker
 python -m pip install -e .
 ```
@@ -128,7 +129,7 @@ lightworker orchestrate `
   "定位登录接口偶发500的原因，并给出经过证据支持的修复计划"
 ```
 
-v0.1.1 示例默认路由：
+v0.2.0 示例默认路由：
 
 | 任务类型 | 默认模型 |
 |---|---|
@@ -162,6 +163,8 @@ python -m lightworker web --no-open --port 8766
 - 审批 `awaiting_approval` 写任务、取消非终态任务。
 - 任务结构化结果、错误信息和事件流查看。
 - Codex、CLIProxyAPI、OpenCodex Proxy 与模型白名单状态。
+- DeepSeek Cache Lab 卡片，展示已核验暖缓存命中率、严格 Cohort 审计与目标状态。
+- 显式 Context Pack，为 Worker 提供稳定共享资料，且不会自动摄入仓库或环境文件。
 
 Web 服务只允许绑定字面回环地址 `127.0.0.1` 或 `::1`。每次启动会生成随机会话令牌，写接口必须携带该令牌；页面会自动注入令牌，不需要手工填写。该令牌用于防止浏览器跨站写请求，不用于隔离同一用户下的其他本机进程；本机同用户进程属于受信任边界，并且只读 API 可能返回任务与诊断信息。Web 与 Codex MCP 共享 SQLite 状态库，并通过进程锁保证同一时刻只有一个 Scheduler 执行任务。未持锁的进程处于 standby 状态，仍可提交和查询任务，并会在当前 Scheduler 退出后自动接管。
 
@@ -190,11 +193,13 @@ LightWorker 不直接保存模型服务的 API Key。它调用本机 Codex CLI�
 
 默认路由只是起点：`low` 推理任务交给 DeepSeek V4 Flash，复杂规划、编码与审查交给 `gpt-5.6-sol`。所有可用模型仍受 `config.toml` 中的白名单控制。
 
-## Provider 缓存观测
+## Provider Cache Lab
 
-Prompt Protocol v2 把稳定的安全、输出和角色协议放在任务特定内容之前，并对列表和路由策略做确定性序列化。兼容网关因此可以在彼此独立的短生命周期 Worker 之间复用更长的精确前缀。LightWorker 仍保留 `--ephemeral`，不会共享对话或工具状态。
+Prompt Protocol v4 把稳定的安全、输出、角色、Profile 和可选 Context Pack 契约放在任务特定内容之前。Cache Cohort v2 按网关、响应模式、上游模型、推理强度、Profile、Schema、沙箱、Context Pack、配置作用域和工具契约严格隔离，避免把不同缓存池错误合并。Root 公平调度最多允许一次额外的同 Cohort 亲和选择，不会为了缓存让其他根任务长期饥饿。
 
-每次运行都会写入 `worker.prompt` 事件，其中包含完整提示、稳定前缀、Schema、网关和缓存 cohort 的 SHA-256 指纹，不记录对应正文。这些确定性指纹不是匿名机制。当 Codex 的终止事件返回受支持的 usage 字段时，还会写入一条规范化 `worker.usage` 事件，包含输入、缓存命中、未命中、输出、总 Token 数和缓存命中率。新事件不包含提示词正文、任务目标、工作区路径、网关 URL、模型目录或凭据。
+90% 目标只按单一严格 Cohort 认证，并要求至少 20 个路由已核验的暖样本，使用 Token 加权的已核验命中率。未核验路由、旧 Cohort、冷启动和不同网关仍会展示，但不能合并成“已达标”。指标可通过管理页、`lightworker cache-metrics`、`GET /api/cache-metrics` 和 MCP `get_cache_metrics` 查看。
+
+Context Pack 只能由调用方显式提交，最大 32 KiB，经过规范编码与疑似凭据检查，并始终作为不可信参考数据处理。LightWorker 不会自动把仓库文件、日志、环境文件或任意路径摄入 Context Pack；Prompt 与缓存事件只公开哈希和字节数，不公开正文。
 
 ## 隐私与本地状态
 

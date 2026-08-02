@@ -27,7 +27,7 @@
 
 LightWorker is a lightweight, local-first multi-agent task runner with no third-party Python runtime dependencies. It lets Codex submit tasks through MCP, persists the task DAG in SQLite, executes Workers with `codex exec --json`, and uses an isolated Git worktree for write tasks.
 
-> **Project status:** `v0.1.1` is the current release; `v0.1.0` was the first public release. By default, LightWorker listens only on the local loopback address and does not automatically commit, merge, push, or publish; write tasks require approval and run in an isolated Git worktree.
+> **Project status:** `v0.2.0` is the current release. It adds profile-based dual-gateway delegation and a measurable DeepSeek Cache Lab. By default, LightWorker listens only on the local loopback address and does not automatically commit, merge, push, or publish; write tasks require approval and run in an isolated Git worktree.
 
 ## Core Capabilities
 
@@ -38,7 +38,8 @@ LightWorker is a lightweight, local-first multi-agent task runner with no third-
 | Reasoning-aware routing | Mechanical tasks go to DeepSeek V4 Flash by default; complex tasks use `gpt-5.6-sol` |
 | Approval and isolation | `auto_readonly` runs read-only tasks automatically; write tasks wait for approval and enter an isolated Git worktree |
 | Three control surfaces | CLI, Codex MCP, and the local Web Console share the same scheduler and state store |
-| Cache-aware prompts | Stable Prompt Protocol v2 prefixes, content-free cohort fingerprints, and normalized provider cache-usage events |
+| Measurable cache optimization | Prompt Protocol v4, strict Cache Cohort v2 isolation, explicit Context Packs, cache-affinity scheduling, and verified warm-cache metrics |
+| Dual-gateway profiles | Named Planner, fast, deep, and review profiles can route through OpenCodex or CLIProxyAPI with explicit fallback and route audits |
 | Local-first security | `danger-full-access` is prohibited; user MCP servers are isolated by default; no automatic commit, merge, push, or publish |
 
 ## Secure Defaults
@@ -65,10 +66,10 @@ The local development verification environment is Python 3.13, Git 2.51, Codex C
 
 ## Installation
 
-Install the CI-verified universal wheel directly from the v0.1.1 GitHub release:
+Install the CI-verified universal wheel directly from the v0.2.0 GitHub release:
 
 ```bash
-python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.1.1/lightworker-0.1.1-py3-none-any.whl
+python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.2.0/lightworker-0.2.0-py3-none-any.whl
 lightworker init
 lightworker doctor
 ```
@@ -76,7 +77,7 @@ lightworker doctor
 SHA-256 checksums for release assets are listed in [`SHA256SUMS.txt`](SHA256SUMS.txt). When developing or auditing the source, you can install from a pinned tag:
 
 ```bash
-git clone --branch v0.1.1 --depth 1 https://github.com/ncepuee/LightWorker.git
+git clone --branch v0.2.0 --depth 1 https://github.com/ncepuee/LightWorker.git
 cd LightWorker
 python -m pip install -e .
 ```
@@ -128,7 +129,7 @@ lightworker orchestrate `
   "Find the cause of intermittent HTTP 500 errors in the login endpoint and provide an evidence-backed remediation plan."
 ```
 
-Example default routing in v0.1.1:
+Example default routing in v0.2.0:
 
 | Task type | Default model |
 |---|---|
@@ -162,6 +163,8 @@ The default address is `http://127.0.0.1:8766/`. The page offers:
 - Approval of `awaiting_approval` write tasks and cancellation of non-terminal tasks.
 - Structured task results, error messages, and event stream inspection.
 - Status of Codex, CLIProxyAPI, OpenCodex Proxy, and the model allowlist.
+- A DeepSeek Cache Lab card with verified warm-cache hit rate, strict cohort audit, and target status.
+- Explicit Context Packs for stable shared reference material without automatic repository or environment-file ingestion.
 
 The Web service may only bind to the literal loopback addresses `127.0.0.1` or `::1`. A random session token is generated at every startup, and write endpoints must carry it; the page injects the token automatically, so no manual entry is required. The token protects against cross-site write requests from browsers; it does not isolate other local processes running under the same user. Same-user local processes are within the trusted boundary, and read-only APIs may return task and diagnostic information. Web and Codex MCP share the SQLite state store, and a process lock guarantees that only one Scheduler executes tasks at any given time. Processes without the lock stay in standby: they can still submit and query tasks and will take over automatically once the current Scheduler exits.
 
@@ -190,11 +193,13 @@ LightWorker does not store API keys for model services directly. It invokes the 
 
 The default routing is only a starting point: `low`-reasoning tasks go to DeepSeek V4 Flash, while complex planning, coding, and review go to `gpt-5.6-sol`. All available models remain controlled by the allowlist in `config.toml`.
 
-## Provider Cache Observability
+## Provider Cache Lab
 
-Prompt Protocol v2 places the stable safety, output, and role contract before task-specific content and serializes lists and routing policies deterministically. Compatible gateways can therefore reuse a longer exact prefix across independent short-lived Workers. LightWorker keeps `--ephemeral` enabled and does not share conversations or tool state.
+Prompt Protocol v4 keeps the stable safety, output, role, profile, and optional Context Pack contract ahead of task-specific content. Cache Cohort v2 prevents misleading aggregation across gateways, response modes, upstream models, reasoning effort, profiles, schemas, sandboxes, Context Packs, configuration scopes, and tool contracts. Root-fair scheduling permits at most one extra same-cohort affinity selection, so cache reuse cannot starve unrelated roots.
 
-Each run writes a `worker.prompt` event containing content-free SHA-256 fingerprints for the full prompt, stable prefix, schema, gateway, and cache cohort. These deterministic fingerprints avoid logging the source text, but they are not an anonymity mechanism. When a terminal Codex event reports supported usage fields, LightWorker also writes one normalized `worker.usage` event with input, cached, uncached, output, and total token counts plus the cache hit rate. These events do not include prompt text, objectives, workspace paths, gateway URLs, model catalogs, or credentials.
+The 90% target is certified only for one strict cohort using at least 20 route-verified warm samples and a token-weighted verified hit rate. Unverified routes, legacy cohorts, cold starts, and different gateways remain visible but cannot be combined into an “achieved” result. Metrics are available in the Web Console, `lightworker cache-metrics`, the `GET /api/cache-metrics` endpoint, and the MCP `get_cache_metrics` tool.
+
+Context Packs are explicit caller-supplied reference text, capped at 32 KiB, canonically encoded, screened for likely credentials, and treated as untrusted data. LightWorker never automatically reads repository files, logs, environment files, or arbitrary paths into a Context Pack. Prompt and cache events expose hashes and byte counts rather than Context Pack content.
 
 ## Privacy and Local State
 

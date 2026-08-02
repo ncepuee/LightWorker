@@ -1,19 +1,54 @@
+
 # Copy to %LOCALAPPDATA%\LightWorker\config.toml or use `lightworker init`.
 [runner]
 max_concurrency = 2
 max_tasks_per_plan = 6
 max_delegation_depth = 1
 max_replans = 2
+root_max_concurrency = 2
+root_max_attempts = 8
+root_max_retries = 1
+root_max_escalations = 1
 default_timeout_seconds = 1800
 poll_interval_seconds = 0.25
+# Cache Lab only groups exact cache cohorts; it never reads repository files
+# to manufacture a prompt prefix. A Context Pack must be supplied explicitly.
+cache_affinity_enabled = true
+cache_affinity_window_seconds = 300
+cache_warm_window_seconds = 3600
+cache_target_hit_rate = 0.90
+cache_min_warm_samples = 20
+cache_config_scope = "lightworker.cache.default.v1"
+cache_tool_contract = "codex.exec.v1"
 allow_dirty_worktree_source = false
+# Off by default: heuristic redaction cannot guarantee arbitrary secrets are removed.
+retain_redacted_raw_results = false
 codex_command = "codex"
 codex_ignore_user_config = true
-# Safe default: workers do not inherit user MCP servers or sandbox defaults.
-# Set false only as an explicit unsafe compatibility opt-in; user MCP tools may have external side effects.
+default_gateway = "opencodex"
 # For an isolated CLIProxyAPI/OpenCodex worker, keep true and configure both fields below.
 # codex_base_url = "http://127.0.0.1:10100/v1"
 # codex_model_catalog = "C:\\Users\\you\\.codex\\opencodex-catalog.json"
+
+[gateways.opencodex]
+base_url = "http://127.0.0.1:10100/v1"
+response_mode = "native"
+model_catalog = "C:\\Users\\you\\.codex\\opencodex-catalog.json"
+enabled = true
+
+[gateways.cliproxyapi]
+base_url = "http://127.0.0.1:8317/v1"
+response_mode = "translated"
+api_key_env = "CLIPROXYAPI_CLIENT_KEY"
+enabled = true
+
+[model_routes."deepseek/deepseek-v4-flash"]
+primary = "opencodex"
+fallback = ["cliproxyapi"]
+
+[model_routes."deepseek/deepseek-v4-flash".upstream_models]
+opencodex = "deepseek/deepseek-v4-flash"
+cliproxyapi = "deepseek-v4-flash"
 
 [models]
 planner = "gpt-5.6-sol"
@@ -22,6 +57,32 @@ execute = "gpt-5.6-sol"
 review = "gpt-5.6-sol"
 fast = "deepseek/deepseek-v4-flash"
 reasoning = "gpt-5.6-sol"
+
+# A task may request a profile instead of choosing a model directly. Explicit
+# task-level model, gateway, and reasoning_effort values override these defaults.
+[worker_profiles.planner]
+description = "Break down ambiguous goals and make bounded routing decisions."
+model = "gpt-5.6-sol"
+reasoning_effort = "high"
+allowed_kinds = ["plan"]
+
+[worker_profiles.fast_worker]
+description = "Perform narrow, repeatable, low-judgment exploration or mechanical work."
+model = "deepseek/deepseek-v4-flash"
+reasoning_effort = "low"
+allowed_kinds = ["explore", "execute"]
+
+[worker_profiles.deep_worker]
+description = "Handle bounded implementation or investigation that benefits from deeper reasoning."
+model = "gpt-5.6-luna"
+reasoning_effort = "max"
+allowed_kinds = ["explore", "execute", "review"]
+
+[worker_profiles.reviewer]
+description = "Independently inspect evidence, tests, and implementation risks."
+model = "gpt-5.6-terra"
+reasoning_effort = "high"
+allowed_kinds = ["review"]
 
 [policy]
 allowed_models = [

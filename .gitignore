@@ -35,6 +35,9 @@ scheduler.lock
 *.key
 *.p12
 *.pfx
+credentials*.json
+auth*.json
+config.local.*
 
 # Packaging and local tools
 dist/

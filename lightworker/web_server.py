@@ -1,7 +1,9 @@
+
 from __future__ import annotations
 
 import json
 import secrets
+import sqlite3
 import sys
 import threading
 import webbrowser
@@ -35,11 +37,7 @@ def host_allowed(host_header: str) -> bool:
         if end <= 1 or raw[: end + 1] not in LOCAL_HOSTS:
             return False
         rest = raw[end + 1 :]
-        return rest == "" or (
-            rest.startswith(":")
-            and rest[1:].isdigit()
-            and 1 <= int(rest[1:]) <= 65535
-        )
+        return rest == "" or (rest.startswith(":") and rest[1:].isdigit() and 1 <= int(rest[1:]) <= 65535)
     host, separator, port = raw.partition(":")
     if host not in LOCAL_HOSTS:
         return False
@@ -132,6 +130,14 @@ def _handler_factory(service: LightWorkerService, token: str, static_root: Path)
                     limit = int(query.get("limit", ["200"])[0])
                     self._json(HTTPStatus.OK, service.list_tasks(status, limit))
                     return
+                if path == "/api/cache-metrics":
+                    query = parse_qs(parsed.query)
+                    model = query.get("model", ["deepseek/deepseek-v4-flash"])[0] or None
+                    gateway = query.get("gateway", [None])[0] or None
+                    raw_window = query.get("window_seconds", [None])[0]
+                    window = int(raw_window) if raw_window else None
+                    self._json(HTTPStatus.OK, service.cache_metrics(model, gateway, window))
+                    return
                 if path.startswith("/api/tasks/"):
                     parts = [unquote(part) for part in path.split("/") if part]
                     if len(parts) == 3:
@@ -187,9 +193,21 @@ def _handler_factory(service: LightWorkerService, token: str, static_root: Path)
                     if len(parts) == 4 and parts[3] == "cancel":
                         self._json(HTTPStatus.OK, service.cancel(parts[2]))
                         return
+                    if len(parts) == 4 and parts[3] == "retry-fallback":
+                        self._json(HTTPStatus.ACCEPTED, service.retry_fallback(parts[2]))
+                        return
+                    if len(parts) == 4 and parts[3] == "escalate":
+                        body = self._read_json()
+                        self._json(HTTPStatus.ACCEPTED, service.escalate(parts[2], body.get("profile")))
+                        return
                 self._error(HTTPStatus.NOT_FOUND, "Not found")
             except KeyError as exc:
-                self._error(HTTPStatus.BAD_REQUEST, f"Missing field: {exc.args[0]}")
+                if path.startswith("/api/tasks/"):
+                    self._error(HTTPStatus.NOT_FOUND, f"Task not found: {exc.args[0]}")
+                else:
+                    self._error(HTTPStatus.BAD_REQUEST, f"Missing field: {exc.args[0]}")
+            except sqlite3.IntegrityError as exc:
+                self._error(HTTPStatus.BAD_REQUEST, f"Invalid task relationship: {exc}")
             except (TypeError, ValueError, PolicyError) as exc:
                 self._error(HTTPStatus.BAD_REQUEST, str(exc))
             except Exception as exc:  # pragma: no cover - defensive HTTP boundary

@@ -1,5 +1,7 @@
+
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -9,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
+from .cache import CACHE_WINDOW_MAX_SECONDS
 from .models import ACTIVE_STATUSES, TERMINAL_STATUSES, TaskSpec
 
 
@@ -93,60 +96,539 @@ class TaskStore:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS root_budgets (
+                root_id TEXT PRIMARY KEY,
+                max_concurrency INTEGER NOT NULL,
+                max_attempts INTEGER NOT NULL,
+                max_retries INTEGER NOT NULL,
+                max_escalations INTEGER NOT NULL,
+                attempts_used INTEGER NOT NULL DEFAULT 0,
+                retries_used INTEGER NOT NULL DEFAULT 0,
+                escalations_used INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS usage_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_event_id INTEGER NOT NULL UNIQUE,
+                event_key TEXT,
+                task_id TEXT NOT NULL,
+                cache_cohort TEXT,
+                cache_cohort_sha256 TEXT,
+                gateway TEXT,
+                model TEXT,
+                route_verification TEXT NOT NULL DEFAULT 'unverified',
+                context_pack_hash TEXT,
+                context_pack_bytes INTEGER NOT NULL DEFAULT 0,
+                prompt_protocol TEXT,
+                input_tokens INTEGER NOT NULL CHECK(input_tokens > 0),
+                cached_input_tokens INTEGER NOT NULL CHECK(
+                    cached_input_tokens >= 0 AND cached_input_tokens <= input_tokens
+                ),
+                uncached_input_tokens INTEGER NOT NULL CHECK(uncached_input_tokens >= 0),
+                cache_hit_rate REAL NOT NULL CHECK(cache_hit_rate >= 0 AND cache_hit_rate <= 1),
+                cohort_class TEXT NOT NULL CHECK(cohort_class IN ('cold', 'warm', 'indeterminate')),
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                FOREIGN KEY(source_event_id) REFERENCES events(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS usage_event_receipts (
+                source_event_id INTEGER PRIMARY KEY,
+                disposition TEXT NOT NULL CHECK(disposition IN ('inserted', 'duplicate', 'invalid')),
+                processed_at TEXT NOT NULL,
+                FOREIGN KEY(source_event_id) REFERENCES events(id) ON DELETE CASCADE
+            );
             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, priority, created_at);
             CREATE INDEX IF NOT EXISTS idx_tasks_root ON tasks(root_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, id);
+            CREATE INDEX IF NOT EXISTS idx_usage_samples_metrics
+                ON usage_samples(created_at, model, gateway, cohort_class);
+            CREATE INDEX IF NOT EXISTS idx_usage_samples_cohort
+                ON usage_samples(cache_cohort, cache_cohort_sha256, gateway, model, created_at, task_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_samples_event_key
+                ON usage_samples(event_key) WHERE event_key IS NOT NULL;
             """
         )
+        self._ensure_usage_sample_columns(conn)
+        conn.execute(
+            """
+            UPDATE usage_samples SET cohort_class='indeterminate'
+            WHERE cache_cohort NOT LIKE 'cache_cohort.v2:%'
+               OR prompt_protocol!='lightworker.prompt.v4'
+               OR prompt_protocol IS NULL
+               OR route_verification='mismatch'
+            """
+        )
+        self._backfill_usage_samples()
+
+    @staticmethod
+    def _ensure_usage_sample_columns(conn: sqlite3.Connection) -> None:
+        existing = {str(row[1]) for row in conn.execute("PRAGMA table_info(usage_samples)").fetchall()}
+        additions = {
+            "route_verification": "TEXT NOT NULL DEFAULT 'unverified'",
+            "context_pack_hash": "TEXT",
+            "context_pack_bytes": "INTEGER NOT NULL DEFAULT 0",
+            "prompt_protocol": "TEXT",
+        }
+        for name, declaration in additions.items():
+            if name not in existing:
+                try:
+                    conn.execute(f"ALTER TABLE usage_samples ADD COLUMN {name} {declaration}")
+                except sqlite3.OperationalError as exc:
+                    # Another process may have completed the additive migration
+                    # after this connection read PRAGMA table_info.
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
+
+    def _backfill_usage_samples(self) -> None:
+        """Materialize one bounded batch of historical usage events.
+
+        A receipt records invalid and duplicate events too, so malformed legacy
+        telemetry is not reparsed on every process startup.
+        """
+        while True:
+            with self.transaction(immediate=True) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT e.id,e.task_id,e.payload_json,e.created_at
+                    FROM events e
+                    LEFT JOIN usage_event_receipts receipt ON receipt.source_event_id=e.id
+                    WHERE e.event_type='worker.usage' AND receipt.source_event_id IS NULL
+                    ORDER BY e.id
+                    LIMIT 1000
+                    """
+                ).fetchall()
+                for row in rows:
+                    try:
+                        payload = json.loads(row["payload_json"])
+                    except (TypeError, json.JSONDecodeError):
+                        conn.execute(
+                            "INSERT OR IGNORE INTO usage_event_receipts VALUES(?,?,?)",
+                            (int(row["id"]), "invalid", utc_now()),
+                        )
+                        continue
+                    disposition = self._materialize_usage_sample(
+                        conn, int(row["id"]), str(row["task_id"]), payload, str(row["created_at"])
+                    )
+                    conn.execute(
+                        "INSERT OR IGNORE INTO usage_event_receipts VALUES(?,?,?)",
+                        (int(row["id"]), disposition, utc_now()),
+                    )
+            if len(rows) < 1000:
+                break
 
     def add_event(self, task_id: str, event_type: str, payload: Any | None = None) -> int:
-        cur = self._connection().execute(
-            "INSERT INTO events(task_id,event_type,payload_json,created_at) VALUES(?,?,?,?)",
-            (task_id, event_type, json.dumps(payload or {}, ensure_ascii=False), utc_now()),
-        )
-        return int(cur.lastrowid)
+        payload = payload or {}
+        created_at = utc_now()
+        with self.transaction(immediate=event_type == "worker.usage") as conn:
+            cur = conn.execute(
+                "INSERT INTO events(task_id,event_type,payload_json,created_at) VALUES(?,?,?,?)",
+                (task_id, event_type, json.dumps(payload, ensure_ascii=False), created_at),
+            )
+            event_id = int(cur.lastrowid)
+            if event_type == "worker.usage":
+                disposition = self._materialize_usage_sample(conn, event_id, task_id, payload, created_at)
+                conn.execute(
+                    "INSERT INTO usage_event_receipts VALUES(?,?,?)",
+                    (event_id, disposition, utc_now()),
+                )
+        return event_id
 
-    def create_task(self, spec: TaskSpec, status: str = "queued", priority: int = 0) -> str:
-        task_id = spec.task_id or f"task-{uuid.uuid4().hex[:12]}"
-        root_id = spec.root_id or task_id
-        payload = spec.to_dict()
-        payload["task_id"] = task_id
-        payload["root_id"] = root_id
-        with self.transaction(immediate=True) as conn:
-            conn.execute(
+    @staticmethod
+    def _usage_sample_values(payload: Any) -> dict[str, Any] | None:
+        """Return normalized cache-usage values, or skip an invalid usage event.
+
+        Usage is observed telemetry: a malformed provider event must remain in the
+        event log, but must never distort token-weighted cache metrics.
+        """
+        if not isinstance(payload, dict):
+            return None
+
+        def token(name: str) -> int | None:
+            value = payload.get(name)
+            return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+        input_tokens = token("input_tokens")
+        cached_tokens = token("cached_input_tokens")
+        if input_tokens is None or cached_tokens is None or input_tokens <= 0:
+            return None
+        if cached_tokens < 0 or cached_tokens > input_tokens:
+            return None
+
+        # Compute misses from the validated total rather than trusting an optional
+        # upstream field that can be rounded or inconsistent across gateways.
+        uncached_tokens = input_tokens - cached_tokens
+        declared_uncached = token("uncached_input_tokens")
+        if declared_uncached is not None and declared_uncached != uncached_tokens:
+            return None
+
+        def text(name: str) -> str | None:
+            value = payload.get(name)
+            return value.strip() if isinstance(value, str) and value.strip() else None
+
+        return {
+            "cache_cohort": text("cache_cohort"),
+            "cache_cohort_sha256": text("cache_cohort_sha256"),
+            "gateway": text("gateway"),
+            "model": text("model"),
+            "route_verification": text("route_verification") or "unverified",
+            "context_pack_hash": text("context_pack_sha256"),
+            "context_pack_bytes": token("context_pack_bytes") or 0,
+            "prompt_protocol": text("prompt_protocol"),
+            "warm_window_seconds": token("cache_warm_window_seconds"),
+            "input_tokens": input_tokens,
+            "cached_input_tokens": cached_tokens,
+            "uncached_input_tokens": uncached_tokens,
+            "cache_hit_rate": cached_tokens / input_tokens,
+        }
+
+    @staticmethod
+    def _event_key(payload: Any, task_id: str, values: dict[str, Any]) -> str:
+        if not isinstance(payload, dict):
+            raise TypeError("usage payload must be a mapping")
+        value = payload.get("event_id")
+        if not isinstance(value, bool) and isinstance(value, (str, int)):
+            value = str(value).strip()
+            if value:
+                return f"event:{task_id}:{value}"
+        # Some gateways emit the same final usage once in response.completed
+        # and again in turn.completed without an upstream event id.  Collapse
+        # only identical usage within the same task; identical requests in
+        # separate tasks are legitimate cache samples.
+        fingerprint = {
+            "task_id": task_id,
+            "cache_cohort": values["cache_cohort"],
+            "cache_cohort_sha256": values["cache_cohort_sha256"],
+            "gateway": values["gateway"],
+            "model": values["model"],
+            "input_tokens": values["input_tokens"],
+            "cached_input_tokens": values["cached_input_tokens"],
+            "uncached_input_tokens": values["uncached_input_tokens"],
+        }
+        digest = hashlib.sha256(
+            json.dumps(fingerprint, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return f"usage:{digest}"
+
+    def _materialize_usage_sample(
+        self,
+        conn: sqlite3.Connection,
+        source_event_id: int,
+        task_id: str,
+        payload: Any,
+        created_at: str,
+    ) -> str:
+        values = self._usage_sample_values(payload)
+        if values is None:
+            return "invalid"
+        warm_window = values["warm_window_seconds"]
+        if warm_window is None:
+            warm_window = 300
+        if warm_window <= 0 or warm_window > CACHE_WINDOW_MAX_SECONDS:
+            return "invalid"
+        # A cohort is strict only when every routing dimension that scopes an
+        # upstream cache is known.  Missing metadata remains useful telemetry,
+        # but cannot truthfully be called either a cold or warm cache request.
+        strict = all(
+            values[name] is not None
+            for name in ("cache_cohort", "cache_cohort_sha256", "gateway", "model")
+        ) and str(values["cache_cohort"]).startswith("cache_cohort.v2:") \
+          and values["prompt_protocol"] == "lightworker.prompt.v4"
+        cohort_class = "indeterminate"
+        if strict and values["route_verification"] != "mismatch":
+            warm_cutoff = datetime.fromisoformat(created_at).timestamp() - warm_window
+            warm_cutoff_at = datetime.fromtimestamp(warm_cutoff, UTC).isoformat()
+            earlier = conn.execute(
                 """
-                INSERT INTO tasks(
-                    id,root_id,parent_id,name,kind,objective,workspace,model,
-                    reasoning_effort,sandbox,mode,status,priority,timeout_seconds,
-                    spec_json,created_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                SELECT 1 FROM usage_samples
+                WHERE cache_cohort=? AND cache_cohort_sha256=? AND gateway=? AND model=?
+                  AND task_id<>?
+                  AND created_at>=?
+                  AND cohort_class IN ('cold','warm')
+                  AND route_verification!='mismatch'
+                LIMIT 1
                 """,
                 (
-                    task_id,
-                    root_id,
-                    spec.parent_id,
-                    spec.name,
-                    spec.kind,
-                    spec.objective,
-                    spec.workspace,
-                    spec.model,
-                    spec.reasoning_effort,
-                    spec.sandbox,
-                    spec.mode,
-                    status,
-                    priority,
-                    spec.timeout_seconds,
-                    json.dumps(payload, ensure_ascii=False),
-                    utc_now(),
+                    values["cache_cohort"], values["cache_cohort_sha256"],
+                    values["gateway"], values["model"], task_id,
+                    warm_cutoff_at,
                 ),
+            ).fetchone()
+            cohort_class = "warm" if earlier else "cold"
+        cur = conn.execute(
+            """
+            INSERT INTO usage_samples(
+                source_event_id,event_key,task_id,cache_cohort,cache_cohort_sha256,
+                gateway,model,route_verification,context_pack_hash,context_pack_bytes,prompt_protocol,
+                input_tokens,cached_input_tokens,uncached_input_tokens,
+                cache_hit_rate,cohort_class,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                source_event_id, self._event_key(payload, task_id, values), task_id,
+                values["cache_cohort"], values["cache_cohort_sha256"], values["gateway"],
+                values["model"], values["route_verification"], values["context_pack_hash"],
+                values["context_pack_bytes"], values["prompt_protocol"],
+                values["input_tokens"], values["cached_input_tokens"],
+                values["uncached_input_tokens"], values["cache_hit_rate"], cohort_class,
+                created_at,
+            ),
+        )
+        return "inserted" if cur.rowcount else "duplicate"
+
+    def cache_metrics(
+        self,
+        model: str | None = None,
+        gateway: str | None = None,
+        window_seconds: int = 7 * 24 * 60 * 60,
+    ) -> dict[str, Any]:
+        """Return cache metrics aggregated from materialized usage samples only."""
+        if (
+            isinstance(window_seconds, bool)
+            or not isinstance(window_seconds, int)
+            or window_seconds <= 0
+            or window_seconds > CACHE_WINDOW_MAX_SECONDS
+        ):
+            raise ValueError(f"window_seconds must be between 1 and {CACHE_WINDOW_MAX_SECONDS}")
+        cutoff = datetime.now(UTC).timestamp() - window_seconds
+        cutoff_at = datetime.fromtimestamp(cutoff, UTC).isoformat()
+        clauses = ["created_at>=?"]
+        params: list[Any] = [cutoff_at]
+        if model is not None:
+            clauses.append("model=?")
+            params.append(model)
+        if gateway is not None:
+            clauses.append("gateway=?")
+            params.append(gateway)
+        where = " WHERE " + " AND ".join(clauses)
+
+        def aggregate(classification: str | None = None) -> dict[str, Any]:
+            scoped_where = where
+            scoped_params = list(params)
+            if classification is not None:
+                scoped_where += " AND cohort_class=?"
+                scoped_params.append(classification)
+            row = self._connection().execute(
+                f"""
+                SELECT COUNT(*) AS samples,
+                       COALESCE(SUM(CASE WHEN route_verification='verified' THEN 1 ELSE 0 END), 0) AS verified_samples,
+                       COALESCE(SUM(CASE WHEN route_verification='unverified' THEN 1 ELSE 0 END), 0) AS unverified_samples,
+                       COALESCE(SUM(CASE WHEN route_verification='verified' THEN input_tokens ELSE 0 END), 0) AS verified_input_tokens,
+                       COALESCE(SUM(CASE WHEN route_verification='verified' THEN cached_input_tokens ELSE 0 END), 0) AS verified_cached_input_tokens,
+                       COALESCE(SUM(CASE WHEN route_verification='verified' THEN uncached_input_tokens ELSE 0 END), 0) AS verified_uncached_input_tokens,
+                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                       COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens,
+                       COALESCE(SUM(uncached_input_tokens), 0) AS uncached_input_tokens,
+                       MAX(created_at) AS recent_at
+                FROM usage_samples{scoped_where}
+                """,
+                scoped_params,
+            ).fetchone()
+            result = dict(row)
+            result["samples"] = int(result["samples"])
+            result["verified_samples"] = int(result["verified_samples"])
+            result["unverified_samples"] = int(result["unverified_samples"])
+            for name in (
+                "input_tokens", "cached_input_tokens", "uncached_input_tokens",
+                "verified_input_tokens", "verified_cached_input_tokens", "verified_uncached_input_tokens",
+            ):
+                result[name] = int(result[name])
+            result["cache_hit_rate"] = (
+                result["cached_input_tokens"] / result["input_tokens"]
+                if result["input_tokens"] else None
             )
-            for dependency in spec.dependencies:
+            result["verified_cache_hit_rate"] = (
+                result["verified_cached_input_tokens"] / result["verified_input_tokens"]
+                if result["verified_input_tokens"] else None
+            )
+            return result
+
+        cohort_rows = self._connection().execute(
+            f"""
+            SELECT cache_cohort,cache_cohort_sha256,gateway,model,cohort_class,
+                   MAX(context_pack_hash) AS context_pack_hash,
+                   MAX(context_pack_bytes) AS context_pack_bytes,
+                   MAX(prompt_protocol) AS prompt_protocol,
+                   SUM(CASE WHEN route_verification='verified' THEN 1 ELSE 0 END) AS verified_samples,
+                   SUM(CASE WHEN route_verification='verified' THEN input_tokens ELSE 0 END) AS verified_input_tokens,
+                   SUM(CASE WHEN route_verification='verified' THEN cached_input_tokens ELSE 0 END) AS verified_cached_input_tokens,
+                   COUNT(*) AS samples,
+                   SUM(input_tokens) AS input_tokens,
+                   SUM(cached_input_tokens) AS cached_input_tokens,
+                   SUM(uncached_input_tokens) AS uncached_input_tokens,
+                   MAX(created_at) AS recent_at
+            FROM usage_samples{where}
+            GROUP BY cache_cohort,cache_cohort_sha256,gateway,model,cohort_class
+            ORDER BY recent_at DESC, cache_cohort_sha256, gateway, model
+            """,
+            params,
+        ).fetchall()
+        cohorts: list[dict[str, Any]] = []
+        for row in cohort_rows:
+            item = dict(row)
+            item["samples"] = int(item["samples"])
+            item["verified_samples"] = int(item["verified_samples"] or 0)
+            for name in (
+                "input_tokens", "cached_input_tokens", "uncached_input_tokens",
+                "verified_input_tokens", "verified_cached_input_tokens",
+            ):
+                item[name] = int(item[name])
+            item["cache_hit_rate"] = item["cached_input_tokens"] / item["input_tokens"]
+            item["verified_cache_hit_rate"] = (
+                item["verified_cached_input_tokens"] / item["verified_input_tokens"]
+                if item["verified_input_tokens"] else None
+            )
+            cohorts.append(item)
+        return {
+            "window_seconds": window_seconds,
+            "model": model,
+            "gateway": gateway,
+            "overall": aggregate(),
+            "cold": aggregate("cold"),
+            "warm": aggregate("warm"),
+            "indeterminate": aggregate("indeterminate"),
+            "cohorts": cohorts,
+        }
+
+    def cache_audit(self, task_id: str) -> dict[str, Any] | None:
+        row = self._connection().execute(
+            """
+            SELECT cache_cohort,cache_cohort_sha256,gateway,model,route_verification,
+                   context_pack_hash,context_pack_bytes,prompt_protocol,input_tokens,
+                   cached_input_tokens,uncached_input_tokens,cache_hit_rate,cohort_class,created_at
+            FROM usage_samples WHERE task_id=? ORDER BY id DESC LIMIT 1
+            """,
+            (task_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def create_task(
+        self,
+        spec: TaskSpec,
+        status: str = "queued",
+        priority: int = 0,
+        root_budget: dict[str, int] | None = None,
+    ) -> str:
+        if root_budget and not (spec.root_id or spec.task_id):
+            spec = TaskSpec(**spec.to_dict())
+            spec.task_id = f"task-{uuid.uuid4().hex[:12]}"
+        budgets = {str(spec.root_id or spec.task_id): root_budget} if root_budget else None
+        return self.create_tasks([(spec, status, priority)], root_budgets=budgets)[0]
+
+    def create_tasks(
+        self,
+        entries: list[tuple[TaskSpec, str, int]],
+        *,
+        root_budgets: dict[str, dict[str, int]] | None = None,
+    ) -> list[str]:
+        prepared: list[tuple[str, str, TaskSpec, str, int, dict[str, Any]]] = []
+        for spec, status, priority in entries:
+            task_id = spec.task_id or f"task-{uuid.uuid4().hex[:12]}"
+            root_id = spec.root_id or task_id
+            payload = spec.to_dict()
+            payload["task_id"] = task_id
+            payload["root_id"] = root_id
+            prepared.append((task_id, root_id, spec, status, priority, payload))
+        with self.transaction(immediate=True) as conn:
+            now = utc_now()
+            for root_id, budget in (root_budgets or {}).items():
                 conn.execute(
-                    "INSERT INTO dependencies(task_id,depends_on) VALUES(?,?)",
-                    (task_id, dependency),
+                    """
+                    INSERT INTO root_budgets(
+                        root_id,max_concurrency,max_attempts,max_retries,max_escalations,created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,?) ON CONFLICT(root_id) DO NOTHING
+                    """,
+                    (
+                        root_id,
+                        int(budget["max_concurrency"]),
+                        int(budget["max_attempts"]),
+                        int(budget["max_retries"]),
+                        int(budget["max_escalations"]),
+                        now,
+                        now,
+                    ),
                 )
-        self.add_event(task_id, "task.created", {"status": status, "kind": spec.kind})
-        return task_id
+            for task_id, root_id, spec, status, priority, payload in prepared:
+                conn.execute(
+                    """
+                    INSERT INTO tasks(
+                        id,root_id,parent_id,name,kind,objective,workspace,model,
+                        reasoning_effort,sandbox,mode,status,priority,timeout_seconds,
+                        spec_json,created_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        task_id, root_id, spec.parent_id, spec.name, spec.kind, spec.objective,
+                        spec.workspace, spec.model, spec.reasoning_effort, spec.sandbox, spec.mode,
+                        status, priority, spec.timeout_seconds, json.dumps(payload, ensure_ascii=False), now,
+                    ),
+                )
+                for dependency in spec.dependencies:
+                    conn.execute(
+                        "INSERT INTO dependencies(task_id,depends_on) VALUES(?,?)",
+                        (task_id, dependency),
+                    )
+        for task_id, _, spec, status, _, _ in prepared:
+            self.add_event(task_id, "task.created", {"status": status, "kind": spec.kind})
+        return [task_id for task_id, *_ in prepared]
+
+    def ensure_root_budget(
+        self,
+        root_id: str,
+        *,
+        max_concurrency: int = 2,
+        max_attempts: int = 8,
+        max_retries: int = 1,
+        max_escalations: int = 1,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        values = (
+            root_id,
+            max(1, int(max_concurrency)),
+            max(1, int(max_attempts)),
+            max(0, int(max_retries)),
+            max(0, int(max_escalations)),
+            now,
+            now,
+        )
+        self._connection().execute(
+            """
+            INSERT INTO root_budgets(
+                root_id,max_concurrency,max_attempts,max_retries,max_escalations,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(root_id) DO NOTHING
+            """,
+            values,
+        )
+        return self.root_budget(root_id)
+
+    def root_budget(self, root_id: str) -> dict[str, Any]:
+        row = self._connection().execute(
+            "SELECT * FROM root_budgets WHERE root_id=?", (root_id,)
+        ).fetchone()
+        if not row:
+            return self.ensure_root_budget(root_id)
+        budget = dict(row)
+        active = self._connection().execute(
+            "SELECT COUNT(*) FROM tasks WHERE root_id=? AND status IN ('starting','running')",
+            (root_id,),
+        ).fetchone()[0]
+        budget["active_workers"] = int(active)
+        return budget
+
+    def reserve_budget(self, root_id: str, counter: str) -> bool:
+        columns = {"retry": ("retries_used", "max_retries"), "escalation": ("escalations_used", "max_escalations")}
+        if counter not in columns:
+            raise ValueError(f"Unsupported budget counter: {counter}")
+        used, maximum = columns[counter]
+        self.ensure_root_budget(root_id)
+        with self.transaction(immediate=True) as conn:
+            cur = conn.execute(
+                f"UPDATE root_budgets SET {used}={used}+1,updated_at=? WHERE root_id=? AND {used} < {maximum}",
+                (utc_now(), root_id),
+            )
+            return cur.rowcount == 1
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         row = self._connection().execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
@@ -158,6 +640,15 @@ class TaskStore:
             raise KeyError(task_id)
         data = json.loads(row["spec_json"])
         return TaskSpec(**data)
+
+    def update_spec(self, task_id: str, spec: TaskSpec) -> None:
+        """Persist an additive TaskSpec migration without changing task identity or status."""
+        payload = spec.to_dict()
+        payload["task_id"] = task_id
+        self._connection().execute(
+            "UPDATE tasks SET spec_json=?,model=? WHERE id=?",
+            (json.dumps(payload, ensure_ascii=False), spec.model, task_id),
+        )
 
     def list_tasks(
         self,
@@ -189,14 +680,28 @@ class TaskStore:
     def ready_tasks(self, limit: int) -> list[dict[str, Any]]:
         rows = self._connection().execute(
             """
-            SELECT t.* FROM tasks t
-            WHERE t.status='queued'
-              AND NOT EXISTS (
-                SELECT 1 FROM dependencies d
-                JOIN tasks parent ON parent.id=d.depends_on
-                WHERE d.task_id=t.id AND parent.status!='completed'
-              )
-            ORDER BY t.priority DESC, t.created_at ASC
+            WITH ready AS (
+                SELECT t.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY t.root_id ORDER BY t.priority DESC, t.created_at ASC
+                       ) AS root_round
+                FROM tasks t
+                WHERE t.status='queued'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM dependencies d
+                    JOIN tasks parent ON parent.id=d.depends_on
+                    WHERE d.task_id=t.id AND parent.status!='completed'
+                  )
+                  AND (
+                    SELECT COUNT(*) FROM tasks active
+                    WHERE active.root_id=t.root_id AND active.status IN ('starting','running')
+                  ) < COALESCE(
+                    (SELECT budget.max_concurrency FROM root_budgets budget WHERE budget.root_id=t.root_id),
+                    2
+                  )
+            )
+            SELECT * FROM ready
+            ORDER BY root_round ASC, priority DESC, created_at ASC
             LIMIT ?
             """,
             (limit,),
@@ -205,13 +710,48 @@ class TaskStore:
 
     def claim_task(self, task_id: str) -> str | None:
         lease_id = uuid.uuid4().hex
+        exhausted = False
         with self.transaction(immediate=True) as conn:
-            cur = conn.execute(
-                "UPDATE tasks SET status='starting',lease_id=?,attempt=attempt+1 WHERE id=? AND status='queued'",
-                (lease_id, task_id),
-            )
-            if cur.rowcount != 1:
+            row = conn.execute("SELECT root_id FROM tasks WHERE id=? AND status='queued'", (task_id,)).fetchone()
+            if not row:
                 return None
+            root_id = str(row[0])
+            now = utc_now()
+            conn.execute(
+                """
+                INSERT INTO root_budgets(root_id,max_concurrency,max_attempts,max_retries,max_escalations,created_at,updated_at)
+                VALUES(?,2,8,1,1,?,?) ON CONFLICT(root_id) DO NOTHING
+                """,
+                (root_id, now, now),
+            )
+            budget = conn.execute("SELECT * FROM root_budgets WHERE root_id=?", (root_id,)).fetchone()
+            active = conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE root_id=? AND status IN ('starting','running')", (root_id,)
+            ).fetchone()[0]
+            if int(active) >= int(budget["max_concurrency"]):
+                return None
+            if int(budget["attempts_used"]) >= int(budget["max_attempts"]):
+                conn.execute(
+                    "UPDATE tasks SET status='blocked',error=?,finished_at=? WHERE id=? AND status='queued'",
+                    ("Root task attempt budget exhausted", now, task_id),
+                )
+                exhausted = True
+            if exhausted:
+                lease_id = ""
+            else:
+                cur = conn.execute(
+                    "UPDATE tasks SET status='starting',lease_id=?,attempt=attempt+1 WHERE id=? AND status='queued'",
+                    (lease_id, task_id),
+                )
+                if cur.rowcount != 1:
+                    return None
+                conn.execute(
+                    "UPDATE root_budgets SET attempts_used=attempts_used+1,updated_at=? WHERE root_id=?",
+                    (now, root_id),
+                )
+        if exhausted:
+            self.add_event(task_id, "budget.exhausted", {"counter": "attempts"})
+            return None
         self.add_event(task_id, "task.claimed", {"lease_id": lease_id})
         return lease_id
 
@@ -226,8 +766,7 @@ class TaskStore:
         pid: int | None = None,
         worktree_path: str | None = None,
         branch_name: str | None = None,
-        expected_statuses: set[str] | None = None,
-    ) -> bool:
+    ) -> None:
         fields = ["status=?"]
         values: list[Any] = [status]
         if status == "running":
@@ -249,23 +788,8 @@ class TaskStore:
                 fields.append(f"{key}=?")
                 values.append(value)
         values.append(task_id)
-        where = "id=?"
-        if expected_statuses is None:
-            placeholders = ",".join("?" for _ in TERMINAL_STATUSES)
-            where += f" AND status NOT IN ({placeholders})"
-            values.extend(sorted(TERMINAL_STATUSES))
-        else:
-            if not expected_statuses:
-                return False
-            placeholders = ",".join("?" for _ in expected_statuses)
-            where += f" AND status IN ({placeholders})"
-            values.extend(sorted(expected_statuses))
-        cur = self._connection().execute(
-            f"UPDATE tasks SET {','.join(fields)} WHERE {where}", values
-        )
-        if cur.rowcount:
-            self.add_event(task_id, f"task.{status}", {"error": error} if error else {})
-        return bool(cur.rowcount)
+        self._connection().execute(f"UPDATE tasks SET {','.join(fields)} WHERE id=?", values)
+        self.add_event(task_id, f"task.{status}", {"error": error} if error else {})
 
     def set_pid(self, task_id: str, pid: int) -> None:
         self._connection().execute("UPDATE tasks SET pid=? WHERE id=?", (pid, task_id))
@@ -282,7 +806,7 @@ class TaskStore:
 
     def cancel(self, task_id: str) -> bool:
         cur = self._connection().execute(
-            "UPDATE tasks SET status='cancelled',finished_at=? WHERE id=? AND status NOT IN ('finishing','completed','failed','cancelled','blocked','orphaned')",
+            "UPDATE tasks SET status='cancelled',finished_at=? WHERE id=? AND status NOT IN ('completed','failed','cancelled','blocked')",
             (utc_now(), task_id),
         )
         if cur.rowcount:
@@ -308,7 +832,7 @@ class TaskStore:
     def reconcile_after_restart(self) -> int:
         with self.transaction(immediate=True) as conn:
             rows = conn.execute(
-                "SELECT id FROM tasks WHERE status IN ('starting','running','finishing')"
+                "SELECT id FROM tasks WHERE status IN ('starting','running')"
             ).fetchall()
             for row in rows:
                 conn.execute(
@@ -341,6 +865,6 @@ class TaskStore:
 
     def has_pending_work(self) -> bool:
         row = self._connection().execute(
-            "SELECT 1 FROM tasks WHERE status IN ('queued','starting','running','finishing') LIMIT 1"
+            "SELECT 1 FROM tasks WHERE status IN ('queued','starting','running') LIMIT 1"
         ).fetchone()
         return row is not None

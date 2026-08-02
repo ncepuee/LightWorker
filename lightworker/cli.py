@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import argparse
@@ -6,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .config import Config, load_config, write_default_config
+from .config import Config, GatewayConfig, load_config, write_default_config
 from .mcp_server import run_mcp
 from .scheduler import Scheduler
 from .service import LightWorkerService
@@ -45,7 +46,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode", choices=["plan_only", "auto_readonly", "auto_execute"], default="auto_readonly"
     )
     orchestrate.add_argument("--model")
+    orchestrate.add_argument("--profile", help="Configured worker profile")
+    orchestrate.add_argument("--gateway", help="Configured gateway name")
     orchestrate.add_argument("--max-tasks", type=int)
+    orchestrate.add_argument("--context-pack-file", help="UTF-8 file containing reviewed shared context (max 32KiB)")
     orchestrate.add_argument("--run", action="store_true", help="Run until no queued/active work remains")
 
     submit = sub.add_parser("submit", help="Queue a single worker task")
@@ -53,13 +57,16 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--workspace", required=True)
     submit.add_argument("--kind", choices=["explore", "execute", "review"], default="explore")
     submit.add_argument("--model")
-    submit.add_argument("--effort", choices=["low", "medium", "high", "xhigh"], default="medium")
+    submit.add_argument("--profile", help="Configured worker profile")
+    submit.add_argument("--gateway", help="Configured gateway name")
+    submit.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"])
     submit.add_argument(
         "--mode", choices=["plan_only", "auto_readonly", "auto_execute"], default="auto_readonly"
     )
     submit.add_argument("--timeout", type=int)
     submit.add_argument("--allowed-paths", help="Comma-separated paths relative to workspace")
     submit.add_argument("--success", action="append", default=[], help="Repeatable success criterion")
+    submit.add_argument("--context-pack-file", help="UTF-8 file containing reviewed shared context (max 32KiB)")
     submit.add_argument("--run", action="store_true")
 
     run = sub.add_parser("run", help="Run queued tasks")
@@ -80,11 +87,22 @@ def build_parser() -> argparse.ArgumentParser:
     events.add_argument("--after", type=int, default=0)
     events.add_argument("--limit", type=int, default=200)
 
+    cache_metrics = sub.add_parser("cache-metrics", help="Show cold/warm cache telemetry")
+    cache_metrics.add_argument("--model", default="deepseek/deepseek-v4-flash")
+    cache_metrics.add_argument("--gateway")
+    cache_metrics.add_argument("--window-seconds", type=int)
+
     approve = sub.add_parser("approve", help="Release an awaiting-approval task")
     approve.add_argument("task_id")
 
     cancel = sub.add_parser("cancel", help="Cancel a task")
     cancel.add_argument("task_id")
+
+    retry = sub.add_parser("retry-fallback", help="Clone a failed read-only task onto its fallback gateway")
+    retry.add_argument("task_id")
+    escalate = sub.add_parser("escalate", help="Clone an eligible read-only task onto a deeper worker profile")
+    escalate.add_argument("task_id")
+    escalate.add_argument("--profile")
 
     sub.add_parser("doctor", help="Check Codex, proxy ports, state and model policy")
     web = sub.add_parser("web", help="Run the loopback-only local management console")
@@ -100,6 +118,10 @@ def _service(cfg: Config) -> tuple[LightWorkerService, Scheduler]:
     store = TaskStore(cfg.db_path)
     scheduler = Scheduler(cfg, store)
     return LightWorkerService(cfg, store, scheduler), scheduler
+
+
+def _context_pack_file(path: str | None) -> str | None:
+    return Path(path).expanduser().read_text(encoding="utf-8") if path else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -121,6 +143,13 @@ def main(argv: list[str] | None = None) -> int:
             if not cfg.codex_base_url or not cfg.codex_model_catalog:
                 _json({"error": "--isolated-codex requires --codex-base-url and --model-catalog"})
                 return 2
+            cfg.default_gateway = "opencodex"
+            cfg.gateways["opencodex"] = GatewayConfig(
+                "opencodex",
+                cfg.codex_base_url,
+                "native",
+                model_catalog=cfg.codex_model_catalog,
+            )
         path = write_default_config(cfg, overwrite=args.force)
         _json({"home": str(cfg.home), "config": str(path), "database": str(cfg.db_path)})
         return 0
@@ -144,9 +173,12 @@ def main(argv: list[str] | None = None) -> int:
             result = service.orchestrate(
                 args.objective,
                 args.workspace,
-                args.mode,
-                args.model,
-                args.max_tasks,
+                mode=args.mode,
+                model=args.model,
+                max_tasks=args.max_tasks,
+                gateway=args.gateway,
+                profile=args.profile,
+                context_pack=_context_pack_file(args.context_pack_file),
             )
             _json(result)
             if args.run:
@@ -160,12 +192,15 @@ def main(argv: list[str] | None = None) -> int:
                     "objective": args.objective,
                     "workspace": args.workspace,
                     "kind": args.kind,
+                    "profile": args.profile,
                     "model": args.model,
+                    "gateway": args.gateway,
                     "reasoning_effort": args.effort,
                     "mode": args.mode,
                     "timeout_seconds": args.timeout or cfg.default_timeout_seconds,
                     "allowed_paths": _csv(args.allowed_paths),
                     "success_criteria": args.success,
+                    "context_pack": _context_pack_file(args.context_pack_file),
                 }
             )
             _json(result)
@@ -188,11 +223,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "events":
             _json(service.events(args.task_id, args.after, args.limit))
             return 0
+        if args.command == "cache-metrics":
+            _json(service.cache_metrics(args.model or None, args.gateway, args.window_seconds))
+            return 0
         if args.command == "approve":
             _json(service.approve(args.task_id))
             return 0
         if args.command == "cancel":
             _json(service.cancel(args.task_id))
+            return 0
+        if args.command == "escalate":
+            _json(service.escalate(args.task_id, args.profile))
+            return 0
+        if args.command == "retry-fallback":
+            _json(service.retry_fallback(args.task_id))
             return 0
         if args.command == "doctor":
             _json(service.doctor())

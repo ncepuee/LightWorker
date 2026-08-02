@@ -1,3 +1,4 @@
+
 import subprocess
 from pathlib import Path
 
@@ -50,10 +51,7 @@ def test_subdirectory_workspace_stays_scoped_in_worktree(tmp_path: Path) -> None
     cfg.ensure_dirs()
 
     info = create_worktree(workspace, "task-subdirectory", cfg)
-
     isolated_workspace = Path(info.path)
-    assert isolated_workspace.relative_to(cfg.worktrees_dir) == Path(
-        "task-subdirectory", "packages", "app"
-    )
+    assert isolated_workspace.relative_to(cfg.worktrees_dir) == Path("task-subdirectory", "packages", "app")
     assert (isolated_workspace / "app.txt").read_text(encoding="utf-8") == "app\n"
     assert not (isolated_workspace / "root.txt").exists()

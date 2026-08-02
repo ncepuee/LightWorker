@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import re
@@ -23,6 +24,15 @@ def validate_task(spec: TaskSpec, cfg: Config) -> TaskSpec:
         raise PolicyError(f"Unsupported task kind: {spec.kind}")
     if spec.model not in cfg.allowed_models:
         raise PolicyError(f"Model is not in the allowlist: {spec.model}")
+    if spec.gateway:
+        try:
+            gateway = cfg.gateway_config(spec.gateway)
+        except ValueError as exc:
+            raise PolicyError(str(exc)) from exc
+        if spec.response_mode != gateway.response_mode:
+            raise PolicyError("Task response_mode does not match the selected gateway")
+        if not spec.upstream_model or not spec.cache_cohort:
+            raise PolicyError("Task gateway route is incomplete")
     if spec.reasoning_effort not in {"low", "medium", "high", "xhigh", "max"}:
         raise PolicyError(f"Unsupported reasoning effort: {spec.reasoning_effort}")
     if spec.mode not in {"plan_only", "auto_readonly", "auto_execute"}:

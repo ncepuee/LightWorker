@@ -1,16 +1,16 @@
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-TERMINAL_STATUSES = {"completed", "failed", "cancelled", "blocked", "orphaned"}
-ACTIVE_STATUSES = {"starting", "running", "finishing"}
+TERMINAL_STATUSES = {"completed", "failed", "cancelled", "blocked"}
+ACTIVE_STATUSES = {"starting", "running"}
 KNOWN_STATUSES = {
     "queued",
     "starting",
     "running",
-    "finishing",
     "awaiting_approval",
     "completed",
     "failed",
@@ -28,6 +28,19 @@ class TaskSpec:
     workspace: str
     kind: str = "explore"
     model: str = "gpt-5.6-terra"
+    profile: str | None = None
+    requested_model: str | None = None
+    requested_gateway: str | None = None
+    requested_reasoning_effort: str | None = None
+    gateway: str | None = None
+    upstream_model: str | None = None
+    response_mode: str | None = None
+    fallback_gateway: str | None = None
+    cache_cohort: str | None = None
+    context_pack_name: str | None = None
+    context_pack_version: str | None = None
+    context_pack_content: str | None = None
+    context_pack_hash: str | None = None
     reasoning_effort: str = "medium"
     sandbox: str = "read-only"
     mode: str = "auto_readonly"
@@ -72,6 +85,18 @@ def public_task(row: dict[str, Any]) -> dict[str, Any]:
         "objective",
         "workspace",
         "model",
+        "profile",
+        "requested_model",
+        "requested_gateway",
+        "requested_reasoning_effort",
+        "gateway",
+        "upstream_model",
+        "response_mode",
+        "fallback_gateway",
+        "cache_cohort",
+        "context_pack_name",
+        "context_pack_version",
+        "context_pack_hash",
         "reasoning_effort",
         "sandbox",
         "mode",
@@ -88,4 +113,12 @@ def public_task(row: dict[str, Any]) -> dict[str, Any]:
         "result_path",
         "error",
     )
-    return {key: row.get(key) for key in keys}
+    spec: dict[str, Any] = {}
+    if row.get("spec_json"):
+        try:
+            import json
+
+            spec = json.loads(row["spec_json"])
+        except (TypeError, ValueError):
+            spec = {}
+    return {key: row.get(key, spec.get(key)) for key in keys}

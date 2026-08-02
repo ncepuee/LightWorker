@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import json
@@ -5,6 +6,7 @@ import sys
 from typing import Any, Callable
 
 from . import __version__
+from .cache import CACHE_WINDOW_MAX_SECONDS
 from .config import Config, load_config
 from .policy import PolicyError
 from .scheduler import Scheduler
@@ -27,7 +29,25 @@ TOOLS: list[dict[str, Any]] = [
                     "default": "auto_readonly",
                 },
                 "model": {"type": "string"},
+                "profile": {"type": "string"},
+                "gateway": {"type": "string"},
                 "max_tasks": {"type": "integer", "minimum": 1, "maximum": 12},
+                "budget": {
+                    "type": "object",
+                    "properties": {
+                        "max_concurrency": {"type": "integer", "minimum": 1},
+                        "max_attempts": {"type": "integer", "minimum": 1},
+                        "max_retries": {"type": "integer", "minimum": 0},
+                        "max_escalations": {"type": "integer", "minimum": 0},
+                    },
+                    "additionalProperties": False,
+                },
+                "context_pack": {
+                    "oneOf": [
+                        {"type": "string", "maxLength": 32768},
+                        {"type": "object", "properties": {"name": {"type": "string"}, "version": {"type": "string"}, "content": {"type": "string", "maxLength": 32768}}, "required": ["name", "version", "content"], "additionalProperties": False},
+                    ]
+                },
             },
             "required": ["objective", "workspace"],
             "additionalProperties": False,
@@ -44,7 +64,9 @@ TOOLS: list[dict[str, Any]] = [
                 "workspace": {"type": "string"},
                 "kind": {"type": "string", "enum": ["explore", "execute", "review"]},
                 "model": {"type": "string"},
-                "reasoning_effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh"]},
+                "profile": {"type": "string"},
+                "gateway": {"type": "string"},
+                "reasoning_effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max"]},
                 "mode": {"type": "string", "enum": ["plan_only", "auto_readonly", "auto_execute"]},
                 "timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 86400},
                 "allowed_paths": {"type": "array", "items": {"type": "string"}},
@@ -54,6 +76,22 @@ TOOLS: list[dict[str, Any]] = [
                 "name": {"type": "string"},
                 "parent_id": {"type": "string"},
                 "root_id": {"type": "string"},
+                "budget": {
+                    "type": "object",
+                    "properties": {
+                        "max_concurrency": {"type": "integer", "minimum": 1},
+                        "max_attempts": {"type": "integer", "minimum": 1},
+                        "max_retries": {"type": "integer", "minimum": 0},
+                        "max_escalations": {"type": "integer", "minimum": 0},
+                    },
+                    "additionalProperties": False,
+                },
+                "context_pack": {
+                    "oneOf": [
+                        {"type": "string", "maxLength": 32768},
+                        {"type": "object", "properties": {"name": {"type": "string"}, "version": {"type": "string"}, "content": {"type": "string", "maxLength": 32768}}, "required": ["name", "version", "content"], "additionalProperties": False},
+                    ]
+                },
             },
             "required": ["objective", "workspace"],
             "additionalProperties": False,
@@ -136,6 +174,16 @@ TOOLS: list[dict[str, Any]] = [
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     },
     {
+        "name": "get_cache_metrics",
+        "description": "Return materialized cold/warm cache telemetry and target status without scanning event JSON.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"model": {"type": "string"}, "gateway": {"type": "string"}, "window_seconds": {"type": "integer", "minimum": 1, "maximum": CACHE_WINDOW_MAX_SECONDS}},
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
         "name": "approve_task",
         "description": "Release one task that is awaiting approval into the execution queue.",
         "inputSchema": {
@@ -156,6 +204,28 @@ TOOLS: list[dict[str, Any]] = [
             "additionalProperties": False,
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "retry_fallback",
+        "description": "Clone a failed read-only task onto its configured fallback gateway. Never falls back automatically.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"task_id": {"type": "string"}},
+            "required": ["task_id"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
+        "name": "escalate_task",
+        "description": "Create one budgeted read-only retry using a deeper worker profile. The original task remains unchanged.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"task_id": {"type": "string"}, "profile": {"type": "string"}},
+            "required": ["task_id"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
     },
     {
         "name": "doctor",
@@ -181,8 +251,11 @@ class MCPServer:
             "list_tasks": lambda a: self.service.list_tasks(a.get("status"), int(a.get("limit", 100))),
             "wait_tasks": lambda a: self.service.wait_tasks(a["task_ids"], float(a.get("timeout_seconds", 30))),
             "get_events": lambda a: self.service.events(a["task_id"], int(a.get("after_id", 0)), int(a.get("limit", 200))),
+            "get_cache_metrics": lambda a: self.service.cache_metrics(a.get("model", "deepseek/deepseek-v4-flash"), a.get("gateway"), int(a["window_seconds"]) if a.get("window_seconds") else None),
             "approve_task": lambda a: self.service.approve(a["task_id"]),
             "cancel_task": lambda a: self.service.cancel(a["task_id"]),
+            "retry_fallback": lambda a: self.service.retry_fallback(a["task_id"]),
+            "escalate_task": lambda a: self.service.escalate(a["task_id"], a.get("profile")),
             "doctor": lambda a: self.service.doctor(),
         }
 
@@ -212,9 +285,7 @@ class MCPServer:
                 except json.JSONDecodeError as exc:
                     self._error(None, -32700, f"Parse error: {exc}")
         finally:
-            # Keep the global scheduler lock until active workers have exited;
-            # releasing it early would let another process reconcile live tasks.
-            self.scheduler.stop(wait=True)
+            self.scheduler.stop(wait=False)
 
     def _handle(self, request: dict[str, Any]) -> None:
         request_id = request.get("id")

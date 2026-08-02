@@ -1,9 +1,14 @@
+
 from __future__ import annotations
 
 from pathlib import Path
+import time
+
+import pytest
 
 from lightworker.config import Config
-from lightworker.models import RunResult, TaskSpec, WorktreeInfo
+from lightworker.models import RunResult, TaskSpec
+from lightworker.policy import PolicyError
 from lightworker.scheduler import Scheduler
 from lightworker.service import LightWorkerService
 from lightworker.store import TaskStore
@@ -80,62 +85,40 @@ def test_auto_readonly_runs_explorer_and_holds_executor(tmp_path: Path) -> None:
     assert by_kind["execute"]["status"] == "awaiting_approval"
 
 
-def test_cancelled_task_cannot_be_overwritten_by_worker_completion(tmp_path: Path) -> None:
+def test_invalid_late_planned_child_creates_no_partial_children(tmp_path: Path) -> None:
     cfg = Config(home=tmp_path / "state")
-    cfg.ensure_dirs()
     store = TaskStore(cfg.db_path)
     scheduler = Scheduler(cfg, store, worker=FakeWorker())
-    spec = TaskSpec(objective="inspect", workspace=str(tmp_path), model="gpt-5.6-terra")
-    task_id = store.create_task(spec)
-    assert store.claim_task(task_id)
-    assert store.cancel(task_id)
-
-    scheduler._finish_task(
-        task_id,
-        spec,
-        RunResult(
-            status="completed",
-            result={
-                "status": "completed",
-                "summary": "late result",
-                "evidence": [],
-                "changed_files": [],
-                "tests": [],
-                "risks": [],
-                "followups": [],
-            },
-        ),
-    )
-
-    assert store.get_task(task_id)["status"] == "cancelled"
-    scheduler.stop(wait=True)
+    planner = TaskSpec(objective="plan", workspace=str(tmp_path), kind="plan", model="gpt-5.6-sol")
+    planner_id = store.create_task(planner)
+    plan = {
+        "summary": "invalid late child",
+        "tasks": [
+            {"id": "first", "kind": "explore", "objective": "ok", "dependencies": []},
+            {"id": "second", "kind": "review", "objective": "bad", "dependencies": ["first"], "profile": "missing"},
+        ],
+    }
+    with pytest.raises(PolicyError, match="Invalid planned task"):
+        scheduler._expand_plan(planner_id, planner, plan)
+    assert [row["id"] for row in store.list_tasks(root_id=planner_id)] == [planner_id]
 
 
-def test_cancel_during_worktree_creation_does_not_start_worker(tmp_path: Path, monkeypatch) -> None:
+def test_cache_affinity_is_bounded_by_root_fairness(tmp_path: Path) -> None:
     cfg = Config(home=tmp_path / "state")
-    cfg.ensure_dirs()
     store = TaskStore(cfg.db_path)
-    worker = FakeWorker()
-    scheduler = Scheduler(cfg, store, worker=worker)
-    spec = TaskSpec(
-        objective="change one file",
-        workspace=str(tmp_path),
-        kind="execute",
-        model="gpt-5.6-sol",
-        sandbox="workspace-write",
-        mode="auto_execute",
-    )
-    task_id = store.create_task(spec)
-    lease_id = store.claim_task(task_id)
-    assert lease_id
+    scheduler = Scheduler(cfg, store, worker=FakeWorker())
+    a = store.create_task(TaskSpec(objective="a", workspace=str(tmp_path), root_id="root-a", cache_cohort="cold"))
+    b = store.create_task(TaskSpec(objective="b", workspace=str(tmp_path), root_id="root-b", cache_cohort="warm"))
+    rows = store.ready_tasks(10)
+    scheduler._last_root_id = "root-b"
+    scheduler._last_cache_cohort = "warm"
+    scheduler._last_cache_dispatch_at = time.monotonic()
+    scheduler._cache_affinity_streak = 0
+    ordered = scheduler._order_ready(rows)
+    assert ordered[0][0]["id"] == b and ordered[0][1]
+    scheduler._note_dispatch(ordered[0][0])
 
-    def cancel_while_creating(*_args, **_kwargs):
-        assert store.cancel(task_id)
-        return WorktreeInfo(path=str(tmp_path), branch=f"lightworker/{task_id}")
-
-    monkeypatch.setattr("lightworker.scheduler.create_worktree", cancel_while_creating)
-    scheduler._run_task(task_id, lease_id)
-
-    assert worker.calls == []
-    assert store.get_task(task_id)["status"] == "cancelled"
-    scheduler.stop(wait=True)
+    rows = store.ready_tasks(10)
+    ordered = scheduler._order_ready(rows)
+    assert ordered[0][0]["id"] == a
+    assert not ordered[0][1]

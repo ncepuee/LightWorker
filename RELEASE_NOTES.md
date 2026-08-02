@@ -1,58 +1,80 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ncepuee/LightWorker/v0.1.1/lightworker/web/lightworker-app-icon.png" alt="LightWorker" width="128">
+  <img src="https://raw.githubusercontent.com/ncepuee/LightWorker/v0.2.0/lightworker/web/lightworker-app-icon.png" alt="LightWorker" width="128">
 </p>
 
-<h1 align="center">LightWorker v0.1.1</h1>
+<h1 align="center">LightWorker v0.2.0</h1>
 
-<p align="center"><strong>Cache-friendly prompts · Observable cache usage · Worktree context fix</strong></p>
+<p align="center"><strong>Profile-based delegation · Dual gateways · Measurable DeepSeek Cache Lab</strong></p>
 
-这是 LightWorker 的首个补丁版本，重点是提高 DeepSeek、火山方舟等兼容 Provider 的原生前缀缓存复用率，并让缓存效果可以在任务事件流中被审计。
+[English](#english) · [中文](#中文)
 
-## 安装
+## English
+
+LightWorker v0.2.0 turns the original local task runner into a more auditable multi-agent delegation layer. Lead Codex can decompose work, route bounded Worker profiles through OpenCodex or CLIProxyAPI, and measure DeepSeek prefix-cache behavior without combining unrelated cache pools.
+
+### Highlights
+
+- **Worker Profiles:** named Planner, fast, deep, and reviewer contracts bind task kinds, models, reasoning effort, and gateways.
+- **Dual-gateway routing:** explicit OpenCodex and CLIProxyAPI routes, native/translated protocol labels, route audits, bounded fallback, and manual escalation.
+- **Cache Cohort v2:** cache identities include gateway, response mode, upstream model, reasoning effort, profile, schema, sandbox, Context Pack, configuration scope, and tool contract.
+- **Verified Cache Lab:** cold, warm, and indeterminate samples are materialized in SQLite and exposed through the Web Console, CLI, HTTP API, and MCP.
+- **Honest 90% target:** certification requires at least 20 route-verified warm samples from one strict cohort. Different gateways or Context Packs are never merged to claim success.
+- **Explicit Context Packs:** up to 32 KiB of caller-supplied reference text, canonically encoded, credential-screened, and treated as untrusted data.
+- **Fair cache affinity:** the scheduler may select only one additional same-cohort task before returning to root-fair ordering.
+
+### Fixes and hardening
+
+- Deduplicates repeated terminal usage events without collapsing identical requests from different tasks.
+- Marks legacy, incomplete, or mismatched-route telemetry as indeterminate.
+- Completes historical usage migration in bounded transactional batches and bounds cache windows to prevent timestamp overflow.
+- Keeps Context Pack content out of public task responses and telemetry.
+- Preserves the secure public default that Workers do not inherit user MCP servers.
+- Keeps wheel/sdist Web assets, schemas, favicon, and application icon installable from any working directory.
+
+### Install
 
 ```bash
-python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.1.1/lightworker-0.1.1-py3-none-any.whl
+python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.2.0/lightworker-0.2.0-py3-none-any.whl
 lightworker init
 lightworker doctor
 ```
 
-## 新增功能
+## 中文
 
-- **Prompt Protocol v2**：稳定的安全规则、JSON 输出契约和角色规则位于动态目标之前，列表去重排序，路由策略使用规范 JSON，使相同类型 Worker 更容易命中 Provider 的精确前缀缓存。
-- **不含正文的 Prompt 指纹**：`worker.prompt` 事件记录协议版本以及完整提示、稳定前缀、Schema、网关、缓存 cohort 的 SHA-256，不记录正文；确定性指纹不作为匿名机制。
-- **缓存用量观测**：兼容 Codex/OpenAI 与 DeepSeek 常见 usage 字段，规范为 `worker.usage` 事件，提供输入、命中、未命中、输出、总 Token 和命中率。
-- **更完整 CI**：增加 Python 3.12；Tag 构建校验 Tag 与包版本一致；wheel 和 sdist 分别在干净虚拟环境安装验证。
-- **双语与品牌体验**：整合 v0.1.0 后新增的中英文 README、语言切换、Logo、应用图标和 favicon 修复。
+LightWorker v0.2.0 将原来的本地任务 Runner 升级为更可审计的多 Agent 委派层。Lead Codex 可以自动拆解任务，通过 OpenCodex 或 CLIProxyAPI 调度受约束的 Worker Profile，并在不混合不同缓存池的前提下度量 DeepSeek 前缀缓存效果。
 
-## 修复
+### 核心更新
 
-- 修复动态 Objective 位于稳定协议前方、导致后续公共规则无法被前缀缓存复用的问题。
-- 修复 Executor/Reviewer 在隔离 worktree 中运行时，Prompt 仍显示原仓库路径的问题；现在使用真实解析后的执行目录。
-- 修复部分浏览器标签页 favicon 未及时刷新或未识别的问题。
+- **Worker Profile：** Planner、快速执行、深度执行和 Reviewer 使用明确的任务类型、模型、推理强度与网关契约。
+- **双网关路由：** 显式支持 OpenCodex 与 CLIProxyAPI，展示 Native/Translated 协议、路由审计、预算受控的备用重试与人工升级。
+- **Cache Cohort v2：** 按网关、响应模式、上游模型、推理强度、Profile、Schema、沙箱、Context Pack、配置作用域和工具契约严格隔离。
+- **可核验 Cache Lab：** SQLite 物化冷启动、暖缓存和不确定样本，并通过管理页、CLI、HTTP API 与 MCP 展示。
+- **可信的 90% 目标：** 必须在同一严格 Cohort 中取得至少 20 个路由已核验的暖样本；不同网关或 Context Pack 不会合并报“已达标”。
+- **显式 Context Pack：** 最多 32 KiB，由调用方主动提供，经过规范编码和疑似凭据检查，并始终作为不可信参考数据。
+- **公平缓存亲和：** Scheduler 最多连续增加一次同 Cohort 调度，随后恢复 Root 公平顺序。
 
-## 安全与边界
+### 修复与加固
 
-- 新增事件只保存哈希和 Token 计数，不保存 Prompt、Objective、Workspace、网关 URL、模型目录或凭据明文。
-- 仍使用短生命周期 `codex exec --ephemeral`；没有跨 Agent 共享 `previous_response_id`、方舟 session、工具状态或任务结果。
-- 写任务仍需审批并进入独立 Git worktree；不会自动 commit、merge、push 或发布。
+- 去重 Provider 重复上报的终止 usage，同时不会吞掉不同任务的相同请求。
+- 旧版、字段不完整或路由不匹配的缓存遥测统一归为 `indeterminate`。
+- 历史 usage 采用有界事务批次完整迁移，并限制缓存时间窗口，避免时间戳溢出。
+- Context Pack 正文不会出现在公共任务响应或缓存遥测中。
+- 正式包继续默认隔离用户 MCP，兼容模式需要显式开启。
+- wheel/sdist 安装后可从任意工作目录加载管理页、Schema、favicon 和应用图标。
 
-## 下载资产
+### 安装
 
-| 资产 | 用途 |
-|---|---|
-| `lightworker-0.1.1-py3-none-any.whl` | 推荐；Python 3.11+ 通用安装包 |
-| `lightworker-0.1.1.tar.gz` | 源码分发包 |
-| `SHA256SUMS.txt` | 发布资产 SHA-256 |
-| `lightworker-app-icon.png` | 高分辨率应用图标 |
-| `logo.svg` / `favicon.svg` | 矢量品牌标志与浏览器图标 |
+```bash
+python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.2.0/lightworker-0.2.0-py3-none-any.whl
+lightworker init
+lightworker doctor
+```
 
-## 验证
+## Verification / 验证
 
-- 30 项本地 pytest 回归测试
-- Python 语法编译与 `git diff --check`
-- wheel/sdist 构建与 `twine check`
-- wheel/sdist 独立干净环境安装、CLI 和包内资源验证
-- 发布前源码、Git 历史和构建资产隐私扫描
-- GitHub Actions：Windows、Ubuntu、macOS × Python 3.11、3.12、3.13
+- 77 local pytest tests, including a 1,001-event multi-batch migration regression.
+- Python 3.11, 3.12, and 3.13 across Windows, Ubuntu, and macOS in GitHub Actions.
+- Wheel and sdist build, metadata validation, clean-environment installation, CLI smoke tests, and packaged-resource checks.
+- Final tracked-file, history, and distribution privacy scans before publication.
 
-完整变更见 [Changelog](https://github.com/ncepuee/LightWorker/blob/v0.1.1/CHANGELOG.md)，源码见 [v0.1.1 Tag](https://github.com/ncepuee/LightWorker/tree/v0.1.1)。
+See [CHANGELOG.md](https://github.com/ncepuee/LightWorker/blob/v0.2.0/CHANGELOG.md) for the complete change history.

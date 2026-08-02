@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import json
@@ -8,6 +9,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from .cache import configure_task_cache
 from .config import Config
 from .instance_lock import InstanceLock
 from .models import RunResult, TaskSpec
@@ -31,6 +33,10 @@ class Scheduler:
         self._lock = threading.Lock()
         self._instance_lock = InstanceLock(cfg.scheduler_lock_path)
         self._owns_instance_lock = False
+        self._last_root_id: str | None = None
+        self._last_cache_cohort: str | None = None
+        self._last_cache_dispatch_at = 0.0
+        self._cache_affinity_streak = 0
 
     def start_background(self, reconcile: bool = True, allow_passive: bool = False) -> bool:
         if self._thread and self._thread.is_alive():
@@ -101,16 +107,84 @@ class Scheduler:
             with self._lock:
                 available = self.cfg.max_concurrency - len(self._futures)
             if available > 0:
-                for row in self.store.ready_tasks(available):
+                # Inspect beyond the first root so a saturated orchestration cannot
+                # starve unrelated work that still has root-level capacity.
+                ready = self.store.ready_tasks(max(available * 4, 32))
+                for row, affinity_selected in self._order_ready(ready):
+                    with self._lock:
+                        if len(self._futures) >= self.cfg.max_concurrency:
+                            break
                     task_id = str(row["id"])
+                    self.store.ensure_root_budget(
+                        str(row["root_id"] or task_id),
+                        max_concurrency=min(self.cfg.root_max_concurrency, self.cfg.max_concurrency),
+                        max_attempts=self.cfg.root_max_attempts,
+                        max_retries=self.cfg.root_max_retries,
+                        max_escalations=self.cfg.root_max_escalations,
+                    )
                     lease = self.store.claim_task(task_id)
                     if not lease:
                         continue
+                    self._note_dispatch(row)
+                    if affinity_selected:
+                        self.store.add_event(task_id, "scheduler.cache_affinity_selected", {
+                            "cache_cohort": self._row_cache_cohort(row),
+                            "max_burst": 1,
+                        })
                     future = self._executor.submit(self._run_task, task_id, lease)
                     with self._lock:
                         self._futures[task_id] = future
             self._stop.wait(self.cfg.poll_interval_seconds)
         self._collect_finished()
+
+    @staticmethod
+    def _row_cache_cohort(row: dict[str, Any]) -> str | None:
+        try:
+            value = json.loads(row.get("spec_json") or "{}").get("cache_cohort")
+        except (TypeError, json.JSONDecodeError):
+            return None
+        return str(value) if value else None
+
+    def _order_ready(self, rows: list[dict[str, Any]]) -> list[tuple[dict[str, Any], bool]]:
+        """Keep root rounds fair, then apply one bounded warm-cohort preference."""
+        if not rows:
+            return []
+        rounds: dict[int, list[dict[str, Any]]] = {}
+        for row in rows:
+            rounds.setdefault(int(row.get("root_round") or 1), []).append(row)
+        ordered: list[tuple[dict[str, Any], bool]] = []
+        affinity_available = (
+            self.cfg.cache_affinity_enabled
+            and self._last_cache_cohort is not None
+            and self._cache_affinity_streak < 1
+            and time.monotonic() - self._last_cache_dispatch_at <= self.cfg.cache_affinity_window_seconds
+        )
+        for round_number in sorted(rounds):
+            candidates = rounds[round_number]
+            roots = [str(row["root_id"] or row["id"]) for row in candidates]
+            if self._last_root_id in roots:
+                pivot = roots.index(self._last_root_id) + 1
+                candidates = candidates[pivot:] + candidates[:pivot]
+            selected_id: str | None = None
+            if affinity_available:
+                match = next((row for row in candidates if self._row_cache_cohort(row) == self._last_cache_cohort), None)
+                if match is not None and candidates[0] is not match:
+                    candidates = [match, *[row for row in candidates if row is not match]]
+                    selected_id = str(match["id"])
+                    affinity_available = False
+            ordered.extend((row, str(row["id"]) == selected_id) for row in candidates)
+        return ordered
+
+    def _note_dispatch(self, row: dict[str, Any]) -> None:
+        root_id = str(row["root_id"] or row["id"])
+        cohort = self._row_cache_cohort(row)
+        self._last_root_id = root_id
+        if cohort and cohort == self._last_cache_cohort:
+            self._cache_affinity_streak += 1
+        else:
+            self._last_cache_cohort = cohort
+            self._cache_affinity_streak = 0
+        self._last_cache_dispatch_at = time.monotonic()
 
     def _collect_finished(self) -> None:
         with self._lock:
@@ -137,21 +211,28 @@ class Scheduler:
         if not row or row["status"] == "cancelled":
             return
         try:
-            spec = validate_task(self.store.get_spec(task_id), self.cfg)
+            spec = self.store.get_spec(task_id)
+            if not spec.gateway:
+                route = self.cfg.resolve_route(spec.reasoning_effort, spec.model)
+                spec.gateway = route.gateway
+                spec.upstream_model = route.upstream_model
+                spec.response_mode = route.response_mode
+                spec.fallback_gateway = route.fallback_gateway
+                spec.cache_cohort = route.cache_cohort
+                configure_task_cache(self.cfg, spec)
+                self.store.update_spec(task_id, spec)
+                self.store.add_event(task_id, "task.route_migrated", {"gateway": route.gateway, "response_mode": route.response_mode})
+            spec = validate_task(spec, self.cfg)
             cwd = spec.workspace
             if spec.kind == "execute":
-                if self.store.is_cancelled(task_id):
-                    return
                 info = create_worktree(spec.workspace, task_id, self.cfg)
                 cwd = info.path
-                if not self.store.update_status(
+                self.store.update_status(
                     task_id,
                     "starting",
                     worktree_path=info.path,
                     branch_name=info.branch,
-                    expected_statuses={"starting"},
-                ):
-                    return
+                )
             elif spec.kind == "review":
                 cwd = self._review_workspace(task_id, spec.workspace)
 
@@ -160,10 +241,19 @@ class Scheduler:
 
             def on_pid(pid: int) -> None:
                 self.store.set_pid(task_id, pid)
-                self.store.update_status(task_id, "running", expected_statuses={"starting"})
+                self.store.update_status(task_id, "running")
 
-            if self.store.is_cancelled(task_id):
-                return
+            self.store.add_event(
+                task_id,
+                "worker.gateway_selected",
+                {
+                    "gateway": spec.gateway,
+                    "model": spec.model,
+                    "upstream_model": spec.upstream_model,
+                    "response_mode": spec.response_mode,
+                    "cache_cohort": spec.cache_cohort,
+                },
+            )
 
             result = self.worker.run(
                 task_id,
@@ -175,19 +265,9 @@ class Scheduler:
             )
             self._finish_task(task_id, spec, result)
         except (PolicyError, WorktreeError) as exc:
-            self.store.update_status(
-                task_id,
-                "blocked",
-                error=str(exc),
-                expected_statuses={"starting", "running"},
-            )
+            self.store.update_status(task_id, "blocked", error=str(exc))
         except Exception as exc:
-            self.store.update_status(
-                task_id,
-                "failed",
-                error=f"Worker error: {exc}",
-                expected_statuses={"starting", "running"},
-            )
+            self.store.update_status(task_id, "failed", error=f"Worker error: {exc}")
 
     def _finish_task(self, task_id: str, spec: TaskSpec, result: RunResult) -> None:
         if result.status != "completed":
@@ -196,17 +276,10 @@ class Scheduler:
                 result.status,
                 error=result.error,
                 result_path=result.result_path,
-                expected_statuses={"starting", "running"},
             )
             return
         payload = result.result or {}
         if spec.kind == "plan":
-            if not self.store.update_status(
-                task_id,
-                "finishing",
-                expected_statuses={"starting", "running"},
-            ):
-                return
             try:
                 child_ids = self._expand_plan(task_id, spec, payload)
                 payload = dict(payload)
@@ -218,7 +291,6 @@ class Scheduler:
                     error=f"Planner policy rejection: {exc}",
                     result=payload,
                     result_path=result.result_path,
-                    expected_statuses={"finishing"},
                 )
                 return
         elif payload.get("status") in {"blocked", "failed"}:
@@ -229,7 +301,6 @@ class Scheduler:
                 error=str(payload.get("summary") or f"Worker reported {semantic_status}"),
                 result=payload,
                 result_path=result.result_path,
-                expected_statuses={"starting", "running"},
             )
             return
         self.store.update_status(
@@ -237,19 +308,29 @@ class Scheduler:
             "completed",
             result=payload,
             result_path=result.result_path,
-            expected_statuses={"finishing"} if spec.kind == "plan" else {"starting", "running"},
         )
 
     def _expand_plan(self, planner_id: str, planner: TaskSpec, plan: dict[str, Any]) -> list[str]:
         items = topological_order(validate_plan(plan, self.cfg))
         root_id = planner.root_id or planner_id
         generated = {str(item["id"]): f"task-{uuid.uuid4().hex[:12]}" for item in items}
-        child_ids: list[str] = []
+        entries: list[tuple[TaskSpec, str, int]] = []
         for item in items:
             name = str(item["id"])
             kind = str(item.get("kind", "explore"))
-            reasoning_effort = str(item.get("reasoning_effort", "medium"))
-            model = self.cfg.route_model(reasoning_effort, item.get("model"))
+            requested_effort = str(item["reasoning_effort"]) if item.get("reasoning_effort") else None
+            profile = str(item["profile"]) if item.get("profile") else None
+            try:
+                selected = self.cfg.resolve_profile(
+                    profile,
+                    kind=kind,
+                    model=str(item["model"]) if item.get("model") else None,
+                    reasoning_effort=requested_effort,
+                )
+            except ValueError as exc:
+                raise PolicyError(f"Invalid planned task {name!r}: {exc}") from exc
+            reasoning_effort = selected.reasoning_effort
+            route = self.cfg.resolve_route(reasoning_effort, selected.model, selected.gateway)
             status = "queued"
             if planner.mode == "plan_only" or (planner.mode == "auto_readonly" and kind == "execute"):
                 status = "awaiting_approval"
@@ -261,7 +342,20 @@ class Scheduler:
                 kind=kind,
                 objective=str(item["objective"]),
                 workspace=planner.workspace,
-                model=model,
+                model=route.model,
+                profile=selected.profile,
+                requested_model=str(item["model"]) if item.get("model") else None,
+                requested_gateway=None,
+                requested_reasoning_effort=requested_effort,
+                gateway=route.gateway,
+                upstream_model=route.upstream_model,
+                response_mode=route.response_mode,
+                fallback_gateway=route.fallback_gateway,
+                cache_cohort=route.cache_cohort,
+                context_pack_name=planner.context_pack_name,
+                context_pack_version=planner.context_pack_version,
+                context_pack_content=planner.context_pack_content,
+                context_pack_hash=planner.context_pack_hash,
                 reasoning_effort=reasoning_effort,
                 sandbox="workspace-write" if kind == "execute" else "read-only",
                 mode=planner.mode,
@@ -270,10 +364,31 @@ class Scheduler:
                 prohibited_actions=[str(value) for value in item.get("prohibited_actions", [])],
                 success_criteria=[str(value) for value in item.get("success_criteria", [])],
                 dependencies=[generated[str(dep)] for dep in item.get("dependencies", [])],
-                metadata={"planned_by": planner_id},
+                metadata={
+                    "planned_by": planner_id,
+                    "profile_description": self.cfg.worker_profiles[selected.profile].description if selected.profile else "",
+                },
             )
+            configure_task_cache(self.cfg, child)
             validate_task(child, self.cfg)
-            child_ids.append(self.store.create_task(child, status=status))
+            entries.append((child, status, 0))
+        child_ids = self.store.create_tasks(entries)
+        for child_id, (child, _, _) in zip(child_ids, entries, strict=True):
+            self.store.add_event(child_id, "worker.route_requested", {
+                "profile": child.profile,
+                "model": child.requested_model,
+                "gateway": child.requested_gateway,
+                "reasoning_effort": child.requested_reasoning_effort,
+            })
+            self.store.add_event(child_id, "worker.route_resolved", {
+                "profile": child.profile,
+                "model": child.model,
+                "gateway": child.gateway,
+                "upstream_model": child.upstream_model,
+                "reasoning_effort": child.reasoning_effort,
+                "response_mode": child.response_mode,
+                "verification": "configured",
+            })
         return child_ids
 
     def cancel(self, task_id: str) -> bool:

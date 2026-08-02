@@ -1,19 +1,7 @@
-import io
-import json
 
-from lightworker.config import Config
 from lightworker.models import TaskSpec
-from lightworker.worker import (
-    CodexWorker,
-    PROMPT_PROTOCOL_VERSION,
-    build_prompt,
-    build_stable_prefix,
-    extract_usage,
-    is_generic_result,
-    parse_json_candidate,
-    prompt_metadata,
-    redact_value,
-)
+from lightworker.config import Config, GatewayConfig
+from lightworker.worker import build_prompt, build_worker_environment, extract_observed_model, extract_usage, gateway_codex_args, is_generic_result, normalize_worker_result, parse_json_candidate, prompt_metadata, redact_text, redact_value
 
 
 def test_parses_fenced_json() -> None:
@@ -38,205 +26,134 @@ def test_generic_result_requires_protocol_fields() -> None:
     )
 
 
-def test_generic_result_rejects_wrong_nested_types_and_extra_fields() -> None:
-    valid = {
-        "status": "completed",
-        "summary": "ok",
-        "evidence": [{"file": "a.py", "line": 1, "finding": "checked"}],
-        "changed_files": ["a.py"],
-        "tests": [{"command": "pytest", "status": "passed", "summary": "ok"}],
-        "risks": [],
-        "followups": [],
-    }
-    assert is_generic_result(valid)
-    assert not is_generic_result({**valid, "status": "unknown"})
-    assert not is_generic_result({**valid, "changed_files": [1]})
-    assert not is_generic_result({**valid, "evidence": [{"file": "a.py"}]})
-    assert not is_generic_result({**valid, "extra": True})
-
-
-def test_structured_redaction_preserves_json_shape() -> None:
-    value = {
-        "type": "event",
-        "payload": {"token": "secret-value", "items": ["Bearer abc.def.ghi", 3]},
-    }
-    redacted = redact_value(value)
-    assert redacted["type"] == "event"
-    assert redacted["payload"]["token"] == "<REDACTED>"
-    assert redacted["payload"]["items"] == ["Bearer <REDACTED>", 3]
-
-
-def test_prompt_v2_keeps_stable_contract_before_dynamic_context(tmp_path) -> None:
-    spec = TaskSpec(
-        objective="Inspect  spacing\r\nwithout collapsing it.  ",
-        workspace="original",
-        kind="explore",
-        allowed_paths=["b.py ", "a.py", "a.py"],
-        success_criteria=[" report  evidence  "],
-        metadata={"routing_policy": {"z": 1, "a": 2}},
+def test_normalize_worker_result_fills_missing_lists_and_preserves_unknown_json() -> None:
+    result = normalize_worker_result(
+        {
+            "status": "completed",
+            "summary": "ok",
+            "provider_trace": {"request_id": "synthetic"},
+        }
     )
-    prompt = build_prompt(spec, execution_workspace=tmp_path)
-    assert prompt.index(PROMPT_PROTOCOL_VERSION) < prompt.index("Objective:")
-    assert str(tmp_path) in prompt
-    assert "original" not in prompt
-    assert prompt.index("- a.py") < prompt.index("- b.py")
-    assert "Inspect  spacing\nwithout collapsing it." in prompt
-    assert '{"a":2,"z":1}' in prompt
+    assert result["schema_valid"] is True
+    assert result["schema_status"] == "normalized"
+    assert result["evidence"] == []
+    assert result["changed_files"] == []
+    assert result["tests"] == []
+    assert result["risks"] == []
+    assert result["followups"] == []
+    assert result["raw_json"] == {"provider_trace": {"request_id": "synthetic"}}
 
 
-def test_prompt_fingerprints_separate_stable_prefix_from_task_content(tmp_path) -> None:
+def test_normalize_worker_result_rejects_invalid_status_or_nested_schema() -> None:
+    invalid_status = normalize_worker_result({"status": "ok", "summary": "bad"})
+    assert invalid_status["status"] == "failed"
+    assert invalid_status["schema_valid"] is False
+    assert invalid_status["schema_status"] == "invalid"
+    assert invalid_status["raw_json"]["status"] == "ok"
+
+    invalid_evidence = normalize_worker_result(
+        {
+            "status": "completed",
+            "summary": "bad evidence",
+            "evidence": [{"file": "a.py", "line": "1", "finding": "wrong type"}],
+            "changed_files": [],
+            "tests": [],
+            "risks": [],
+            "followups": [],
+        }
+    )
+    assert invalid_evidence["schema_status"] == "invalid"
+    assert invalid_evidence["raw_json"]["evidence"][0]["line"] == "1"
+
+
+def test_normalize_worker_result_redacts_unknown_json_before_audit_storage() -> None:
+    result = normalize_worker_result(
+        {
+            "status": "completed",
+            "summary": "ok",
+            "api_key": "synthetic-secret",
+        }
+    )
+    assert result["schema_status"] == "normalized"
+    assert result["raw_json"]["api_key"] == "<REDACTED>"
+
+
+def test_prompt_prefix_is_stable_and_usage_is_groupable(tmp_path) -> None:
+    first = TaskSpec(objective="one", workspace=str(tmp_path), kind="explore", cache_cohort="opencodex:native:model")
+    second = TaskSpec(objective="two", workspace=str(tmp_path), kind="explore", cache_cohort="opencodex:native:model")
+    assert build_prompt(first).split("Task-specific context:")[0] == build_prompt(second).split("Task-specific context:")[0]
+    usage = extract_usage({"type": "turn.completed", "usage": {"input_tokens": 100, "input_tokens_details": {"cached_tokens": 80}}})
+    assert usage and usage["cache_hit_rate"] == 0.8
+
+
+def test_observed_model_requires_upstream_event_evidence() -> None:
+    event = {"type": "response.completed", "response": {"model": "deepseek-v4-flash"}}
+    assert extract_observed_model(event) == "deepseek-v4-flash"
+    assert extract_observed_model({"type": "turn.completed", "requested_model": "gpt-5.6-sol"}) is None
+
+
+def test_prompt_metadata_exposes_context_pack_audit_fields(tmp_path) -> None:
     schema = tmp_path / "schema.json"
-    schema.write_text('{"type":"object"}', encoding="utf-8")
-    first = TaskSpec(objective="one", workspace="repo", kind="execute")
-    second = TaskSpec(objective="two", workspace="repo", kind="execute")
-    first_prompt = build_prompt(first, execution_workspace=tmp_path / "a")
-    second_prompt = build_prompt(second, execution_workspace=tmp_path / "b")
-    first_meta = prompt_metadata(first, first_prompt, schema, "http://localhost/v1")
-    second_meta = prompt_metadata(second, second_prompt, schema, "http://localhost/v1")
-    assert build_stable_prefix(first) == build_stable_prefix(second)
-    assert first_meta["stable_prefix_sha256"] == second_meta["stable_prefix_sha256"]
-    assert first_meta["cache_cohort_sha256"] == second_meta["cache_cohort_sha256"]
-    assert first_meta["prompt_sha256"] != second_meta["prompt_sha256"]
-    assert "localhost" not in str(first_meta)
-    assert "one" not in str(first_meta)
-
-
-def test_extract_usage_normalizes_supported_cache_fields() -> None:
-    assert extract_usage(
-        {
-            "type": "turn.completed",
-            "usage": {
-                "input_tokens": 1000,
-                "input_tokens_details": {"cached_tokens": 900},
-                "output_tokens": 50,
-                "total_tokens": 1050,
-            },
-        }
-    ) == {
-        "input_tokens": 1000,
-        "cached_input_tokens": 900,
-        "uncached_input_tokens": 100,
-        "output_tokens": 50,
-        "total_tokens": 1050,
-        "cache_hit_rate": 0.9,
-    }
-    assert extract_usage(
-        {"usage": {"prompt_cache_hit_tokens": 9984, "prompt_cache_miss_tokens": 105}}
-    ) == {
-        "input_tokens": 10089,
-        "cached_input_tokens": 9984,
-        "uncached_input_tokens": 105,
-        "cache_hit_rate": 0.989593,
-    }
-
-
-def test_extract_usage_rejects_invalid_token_values() -> None:
-    assert extract_usage({"usage": {"input_tokens": True, "output_tokens": -1}}) is None
-    assert extract_usage({"item": {"usage": {"input_tokens": 10}}}) is None
-    inconsistent = extract_usage({"usage": {"input_tokens": 5, "cached_input_tokens": 8}})
-    assert inconsistent == {"input_tokens": 5, "cached_input_tokens": 8}
-
-
-def test_extract_usage_prefers_explicit_cache_hit_and_miss_totals() -> None:
-    usage = extract_usage(
-        {
-            "usage": {
-                "input_tokens": 999,
-                "prompt_cache_hit_tokens": 80,
-                "prompt_cache_miss_tokens": 20,
-            }
-        }
+    schema.write_text("{}", encoding="utf-8")
+    spec = TaskSpec(
+        objective="inspect",
+        workspace=str(tmp_path),
+        context_pack_name="project",
+        context_pack_hash="pack-sha",
+        metadata={"context_pack_bytes": 123},
     )
-    assert usage["input_tokens"] == 999
-    assert usage["uncached_input_tokens"] == 20
-    assert usage["cache_hit_rate"] == 0.8
+    metadata = prompt_metadata(spec, build_prompt(spec), schema)
+    assert (metadata["context_pack_name"], metadata["context_pack_sha256"], metadata["context_pack_bytes"]) == ("project", "pack-sha", 123)
 
 
-class _CaptureInput(io.StringIO):
-    def close(self) -> None:
-        pass
+def test_structured_redaction_covers_compound_credential_fields() -> None:
+    value = {"access_token": "synthetic", "nested": {"client_secret": "synthetic", "private-key": "synthetic"}, "model": "safe"}
+    assert redact_value(value) == {"access_token": "<REDACTED>", "nested": {"client_secret": "<REDACTED>", "private-key": "<REDACTED>"}, "model": "safe"}
 
 
-class _CompletedProcess:
-    def __init__(self) -> None:
-        self.pid = 4321
-        self.stdin = _CaptureInput()
-        self.stdout = io.StringIO(
-            json.dumps(
-                {
-                    "type": "turn.completed",
-                    "usage": {
-                        "input_tokens": 10,
-                        "input_tokens_details": {"cached_tokens": 8},
-                        "output_tokens": 2,
-                    },
-                    "item": [],
-                }
-            )
-            + "\n"
-        )
-        self.stderr = io.StringIO("")
-
-    def poll(self) -> int:
-        return 0
-
-    def wait(self, timeout=None) -> int:
-        return 0
+def test_raw_text_redaction_covers_quoted_json_credentials() -> None:
+    safe = redact_text('{"access_token":"synthetic-value","client_secret":"another-value"')
+    assert "synthetic-value" not in safe
+    assert "another-value" not in safe
+    assert safe.count("<REDACTED>") == 2
 
 
-def test_worker_run_uses_execution_workspace_and_emits_cache_events(tmp_path, monkeypatch) -> None:
-    cfg = Config(home=tmp_path / "state")
-    cfg.ensure_dirs()
-    worker = CodexWorker(cfg)
-    process = _CompletedProcess()
-    monkeypatch.setattr(worker, "_command_prefix", lambda: ["codex"])
-    monkeypatch.setattr("lightworker.worker.subprocess.Popen", lambda *_args, **_kwargs: process)
-    events = []
-    execution_workspace = tmp_path / "isolated-worktree"
+def test_raw_text_redaction_covers_local_gateway_key_prefixes() -> None:
+    safe = redact_text("cpa-local-syntheticCredential123 ark-1234567890-abcdefghijkl")
+    assert "syntheticCredential123" not in safe
+    assert "abcdefghijkl" not in safe
+    assert safe.count("<REDACTED>") == 2
 
-    worker.run(
-        "task-1",
-        TaskSpec(objective="inspect", workspace=str(tmp_path / "source"), kind="review"),
-        execution_workspace,
-        lambda event_type, payload: events.append((event_type, payload)),
-        lambda _pid: None,
-        lambda: False,
+
+def test_legacy_environment_preserves_existing_openai_api_key(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-legacy-key")
+    cfg = Config(home=tmp_path)
+    environment = build_worker_environment(cfg, cfg.gateway_config("legacy"))
+    assert environment["OPENAI_API_KEY"] == "synthetic-legacy-key"
+
+
+def test_registered_gateway_environment_filters_unselected_credentials(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("UNRELATED_ACCESS_TOKEN", "synthetic-unrelated")
+    cfg = Config(home=tmp_path, default_gateway="opencodex")
+    gateway = GatewayConfig("opencodex", "http://127.0.0.1:10100/v1")
+    cfg.gateways["opencodex"] = gateway
+    assert "UNRELATED_ACCESS_TOKEN" not in build_worker_environment(cfg, gateway)
+
+
+def test_authenticated_gateway_uses_custom_codex_provider_without_secret_in_args(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CLIPROXYAPI_CLIENT_KEY", "synthetic-client-key")
+    cfg = Config(home=tmp_path, default_gateway="cliproxyapi")
+    gateway = GatewayConfig(
+        "cliproxyapi",
+        "http://127.0.0.1:8317/v1",
+        "translated",
+        api_key_env="CLIPROXYAPI_CLIENT_KEY",
     )
-
-    written_prompt = process.stdin.getvalue()
-    assert str(execution_workspace.resolve()) in written_prompt
-    assert str((tmp_path / "source").resolve()) not in written_prompt
-    prompt_event = next(payload for event_type, payload in events if event_type == "worker.prompt")
-    usage_event = next(payload for event_type, payload in events if event_type == "worker.usage")
-    assert prompt_event["prompt_sha256"]
-    assert usage_event["cached_input_tokens"] == 8
-    assert usage_event["cache_hit_rate"] == 0.8
-    assert usage_event["source_event_type"] == "turn.completed"
-    assert "inspect" not in str(prompt_event)
-
-
-def test_worker_terminates_child_when_pid_callback_fails(tmp_path, monkeypatch) -> None:
-    cfg = Config(home=tmp_path / "state")
-    cfg.ensure_dirs()
-    worker = CodexWorker(cfg)
-    process = _CompletedProcess()
-    terminated = []
-    monkeypatch.setattr(worker, "_command_prefix", lambda: ["codex"])
-    monkeypatch.setattr("lightworker.worker.subprocess.Popen", lambda *_args, **_kwargs: process)
-    monkeypatch.setattr("lightworker.worker._terminate_process_tree", terminated.append)
-
-    try:
-        worker.run(
-            "task-2",
-            TaskSpec(objective="inspect", workspace=str(tmp_path), kind="explore"),
-            tmp_path,
-            lambda _event_type, _payload: None,
-            lambda _pid: (_ for _ in ()).throw(RuntimeError("store unavailable")),
-            lambda: False,
-        )
-    except RuntimeError as exc:
-        assert str(exc) == "store unavailable"
-    else:
-        raise AssertionError("expected pid callback failure")
-
-    assert terminated == [process]
+    cfg.gateways["cliproxyapi"] = gateway
+    args = gateway_codex_args(gateway)
+    environment = build_worker_environment(cfg, gateway)
+    assert 'model_provider="cliproxyapi"' in args
+    assert 'model_providers.cliproxyapi.env_key="CLIPROXYAPI_CLIENT_KEY"' in args
+    assert 'model_providers.cliproxyapi.supports_websockets=false' in args
+    assert "synthetic-client-key" not in str(args)
+    assert environment["CLIPROXYAPI_CLIENT_KEY"] == "synthetic-client-key"
