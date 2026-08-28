@@ -36,7 +36,7 @@ const I18N = {
     'status.queued': '等待调度', 'status.starting': '正在启动', 'status.running': '正在运行', 'status.awaiting_approval': '需要审批',
     'status.completed': '已完成', 'status.failed': '失败', 'status.cancelled': '已取消', 'status.blocked': '已阻塞', 'status.orphaned': '已孤立',
     'role.plan': 'Planner', 'role.explore': 'Explorer', 'role.execute': 'Executor', 'role.review': 'Reviewer',
-    'cache.targetTitle': '目标 Cohort 状态', 'cache.colPath': '网关 / 模型', 'cache.colStatus': '状态', 'cache.colSamples': '样本', 'cache.colHit': '命中率',
+    'cache.targetTitle': '目标 Cohort 状态', 'cache.title': '缓存 Cohort 明细', 'cache.colPath': '网关 / 模型', 'cache.colStatus': '状态', 'cache.colSamples': '样本', 'cache.colHit': '命中率',
     'cache.noSamples': '尚无可用缓存样本', 'cache.insufficient': '样本不足', 'cache.warm': '暖', 'cache.cold': '冷',
     'cache.verified': '已核验', 'cache.unverifiedMark': '—（未核验）', 'cache.warmSamples': '{n} 个暖样本 · {v} 已核验',
     'cache.achieved': '已达到 {r} 目标', 'cache.below': '尚未达到目标', 'cache.unverified': '路由未核验',
@@ -105,7 +105,7 @@ const I18N = {
     'status.queued': 'Queued', 'status.starting': 'Starting', 'status.running': 'Running', 'status.awaiting_approval': 'Needs Approval',
     'status.completed': 'Completed', 'status.failed': 'Failed', 'status.cancelled': 'Cancelled', 'status.blocked': 'Blocked', 'status.orphaned': 'Orphaned',
     'role.plan': 'Planner', 'role.explore': 'Explorer', 'role.execute': 'Executor', 'role.review': 'Reviewer',
-    'cache.targetTitle': 'Target cohort status', 'cache.colPath': 'Gateway / Model', 'cache.colStatus': 'Status', 'cache.colSamples': 'Samples', 'cache.colHit': 'Hit Rate',
+    'cache.targetTitle': 'Target cohort status', 'cache.title': 'Cache cohort details', 'cache.colPath': 'Gateway / Model', 'cache.colStatus': 'Status', 'cache.colSamples': 'Samples', 'cache.colHit': 'Hit Rate',
     'cache.noSamples': 'No cache samples available', 'cache.insufficient': 'Insufficient samples', 'cache.warm': 'warm', 'cache.cold': 'cold',
     'cache.verified': 'verified', 'cache.unverifiedMark': '— (unverified)', 'cache.warmSamples': '{n} warm samples · {v} verified',
     'cache.achieved': 'Reached {r} target', 'cache.below': 'Below target', 'cache.unverified': 'Route unverified',
@@ -379,7 +379,7 @@ const FILTERS = [
   { key: 'queued', labelKey: 'col.queued', match: ['queued'] },
   { key: 'awaiting_approval', labelKey: 'col.awaiting_approval', match: ['awaiting_approval'] },
   { key: 'completed', labelKey: 'col.completed', match: ['completed'] },
-  { key: 'failed', labelKey: 'filter.failed', match: ['failed', 'blocked', 'orphaned'] },
+  { key: 'failed', labelKey: 'filter.failed', match: ['failed', 'blocked', 'orphaned', 'cancelled'] },
 ];
 function filteredTasks() {
   const query = state.search.toLowerCase();
@@ -509,10 +509,10 @@ function renderSystem() {
     <td><span class="reach-cell"><span class="reach-pill ${g.tcp_reachable ? 'yes' : 'no'}">TCP</span><span class="reach-pill ${g.api_reachable ? 'yes' : 'no'}">API</span></span></td>
   </tr>`).join('');
   $('#sys-models').innerHTML = (d.model_routes || []).map((r) => `<tr>
-    <td class="model-cell"><span>${escapeHtml(r.model)}</span></td>
+    <td class="mono-cell">${escapeHtml(r.model)}</td>
     <td>${escapeHtml(r.provider || '—')}</td>
     <td>${escapeHtml(r.billing_class || '—')}</td>
-    <td>${escapeHtml(r.primary || '—')}</td>
+    <td class="mono-cell">${escapeHtml(r.primary || '—')}</td>
     <td>${(r.fallback || []).length ? r.fallback.map(escapeHtml).join(', ') : '<small>—</small>'}</td>
     <td><div class="cap-chips">${(r.required_capabilities || []).length ? r.required_capabilities.map((c) => `<span class="cap-chip">${escapeHtml(c)}</span>`).join('') : '<span class="cap-chip none">—</span>'}</div></td>
     <td><span class="${r.routable ? 'routable-yes' : 'routable-no'}">${r.routable ? '✓' : '✗'}</span></td>

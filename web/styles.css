@@ -359,6 +359,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .def dd { margin: 5px 0 0; font-size: 12px; font-weight: 650; word-break: break-all; }
 .def dd.mono { font-family: var(--mono); font-size: 10.5px; color: var(--text-2); font-weight: 500; }
 .bool-ok { color: var(--ok); } .bool-bad { color: var(--bad); }
+.mono-cell { font-family: var(--mono); font-size: 11px; color: var(--text-2); }
 .routable-yes { color: var(--ok); font-weight: 800; }
 .routable-no { color: var(--red); font-weight: 800; }
 .reach-cell { display: inline-flex; gap: 5px; align-items: center; }
