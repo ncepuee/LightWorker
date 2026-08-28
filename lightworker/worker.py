@@ -584,7 +584,6 @@ class CodexWorker:
             *prefix,
             "exec",
             "--json",
-            "--ephemeral",
             "--sandbox",
             spec.sandbox,
             "--cd",
@@ -602,7 +601,11 @@ class CodexWorker:
         if self.cfg.codex_sandbox_network_access:
             # Keep workspace-write file restrictions; allow outbound network so
             # release-style tasks can drive gh / git push. Opt-in via config.
+            # --ephemeral must NOT be combined with this: ephemeral sessions
+            # discard -c sandbox overrides, so network would stay blocked.
             args.extend(["--config", "sandbox_workspace_write.network_access=true"])
+        else:
+            args.append("--ephemeral")
         args.extend(gateway_codex_args(gateway))
         if gateway.model_catalog:
             catalog = str(Path(gateway.model_catalog).expanduser().resolve()).replace("\\", "\\\\")
