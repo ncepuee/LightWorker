@@ -76,32 +76,27 @@ jobs:
         run: |
           python -m venv .venv-sdisttest
           .venv-sdisttest/bin/python -m pip install dist/*.tar.gz
-      - name: Verify CLI and installed resources
+      - name: Verify source-tree resources
         run: |
           set -euo pipefail
+          test -f web/index.html
+          test -f web/app.js
+          test -f web/styles.css
+          test -f web/logo.svg
+          test -f web/favicon.svg
+          test -f web/lightworker-app-icon.png
+          test -f schemas/plan.schema.json
+          test -f schemas/result.schema.json
+      - name: Verify installed CLI and version metadata
+        run: |
+          set -euo pipefail
+          # Since 0.4.0 the Web Console and schemas resolve from a source
+          # checkout (pip install -e .); installed wheel/sdist expose the
+          # CLI and MCP server, so only the CLI smoke and version metadata
+          # are asserted here.
           .venv-wheeltest/bin/lightworker --help >/dev/null
           .venv-wheeltest/bin/python -I -m lightworker --help >/dev/null
-          .venv-wheeltest/bin/python -I - <<'PY'
-          import importlib.metadata as md
-          from pathlib import Path
-          import lightworker
-
-          root = Path(lightworker.__file__).resolve().parent
-          expected = [
-              root / "web" / "index.html",
-              root / "web" / "app.js",
-              root / "web" / "styles.css",
-              root / "web" / "logo.svg",
-              root / "web" / "favicon.svg",
-              root / "web" / "lightworker-app-icon.png",
-              root / "schemas" / "plan.schema.json",
-              root / "schemas" / "result.schema.json",
-          ]
-          missing = [str(path) for path in expected if not path.is_file()]
-          assert not missing, f"missing installed resources: {missing}"
-          assert lightworker.__version__ == md.version("lightworker")
-          print("installed package resources verified")
-          PY
+          .venv-wheeltest/bin/python -I -c "import importlib.metadata as md, lightworker; assert lightworker.__version__ == md.version('lightworker')"
           .venv-sdisttest/bin/lightworker --help >/dev/null
           .venv-sdisttest/bin/python -I -c "import importlib.metadata as md, lightworker; assert lightworker.__version__ == md.version('lightworker')"
       - name: Upload distributions
