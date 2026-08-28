@@ -214,12 +214,15 @@
           <section class="card">
             <header class="card-head"><div><span class="eyebrow">Gateways</span><h2 data-i18n="sys.gateways">网关</h2></div></header>
             <div class="table-wrap"><table>
-              <thead><tr><th data-i18n="sys.colName">名称</th><th data-i18n="sys.colProto">协议</th><th data-i18n="sys.colCaps">能力</th><th data-i18n="sys.colCred">凭据</th><th data-i18n="sys.colReach">连接</th></tr></thead>
+              <thead><tr><th data-i18n="sys.colName">名称</th><th data-i18n="sys.colProto">协议</th><th data-i18n="sys.colCaps">能力</th><th data-i18n="sys.colCatalog">目录</th><th data-i18n="sys.colCred">凭据</th><th data-i18n="sys.colReach">连接</th></tr></thead>
               <tbody id="sys-gateways"></tbody>
             </table></div>
           </section>
           <section class="card">
-            <header class="card-head"><div><span class="eyebrow">Models</span><h2 data-i18n="sys.models">模型路由</h2></div></header>
+            <header class="card-head">
+              <div><span class="eyebrow">Models</span><h2 data-i18n="sys.models">模型路由</h2></div>
+              <div class="funnel-chips" id="models-funnel"></div>
+            </header>
             <div class="table-wrap"><table>
               <thead><tr><th data-i18n="sys.colModel">模型</th><th data-i18n="sys.colProvider">提供方</th><th data-i18n="sys.colBilling">计费</th><th data-i18n="sys.colPrimary">主网关</th><th data-i18n="sys.colFallback">备用</th><th data-i18n="sys.colCaps">能力</th><th data-i18n="sys.colRoutable">可路由</th></tr></thead>
               <tbody id="sys-models"></tbody>
