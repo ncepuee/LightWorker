@@ -4,119 +4,245 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="lightworker-token" content="__LIGHTWORKER_TOKEN__">
-  <meta name="theme-color" content="#0b0d12">
+  <meta name="theme-color" content="#07090f">
   <title>LightWorker v__LIGHTWORKER_VERSION__</title>
-  <link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg?v=2">
-  <link rel="shortcut icon" type="image/svg+xml" href="/favicon.svg?v=2">
-  <link rel="apple-touch-icon" href="/lightworker-app-icon.png?v=2">
+  <link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg?v=3">
+  <link rel="shortcut icon" type="image/svg+xml" href="/favicon.svg?v=3">
+  <link rel="apple-touch-icon" href="/lightworker-app-icon.png?v=3">
   <link rel="stylesheet" href="/styles.css?v=__LIGHTWORKER_VERSION__">
 </head>
 <body>
-  <div class="shell">
+  <div class="app" data-view="overview">
+
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark"><img src="/logo.svg" alt="" width="40" height="40"></div>
+        <div class="brand-mark"><img src="/logo.svg" alt="" width="38" height="38"></div>
         <div class="brand-copy">
           <strong>LightWorker</strong>
-          <span>Agent Control Plane</span>
-          <span class="version-badge" aria-label="LightWorker 当前版本">v__LIGHTWORKER_VERSION__</span>
+          <span class="brand-sub" data-i18n="brand.sub">Agent Control Plane</span>
         </div>
+        <span class="version-badge" aria-label="LightWorker 当前版本">v__LIGHTWORKER_VERSION__</span>
       </div>
-      <nav aria-label="任务状态过滤" data-i18n-aria="nav.filter">
-        <button class="nav-item active" data-status=""><span data-i18n="nav.all">全部任务</span><b id="nav-all">0</b></button>
-        <button class="nav-item" data-status="running"><span data-i18n="nav.running">正在运行</span><b id="nav-running">0</b></button>
-        <button class="nav-item" data-status="queued"><span data-i18n="nav.queued">等待调度</span><b id="nav-queued">0</b></button>
-        <button class="nav-item" data-status="awaiting_approval"><span data-i18n="nav.approval">需要审批</span><b id="nav-approval">0</b></button>
-        <button class="nav-item" data-status="completed"><span data-i18n="nav.completed">已完成</span><b id="nav-completed">0</b></button>
-        <button class="nav-item" data-status="failed"><span data-i18n="nav.failed">异常任务</span><b id="nav-failed">0</b></button>
+
+      <nav class="side-nav" aria-label="Primary">
+        <a class="nav-link" href="#/overview" data-route="overview">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 3.5h7v7h-7zM13.5 3.5h7v4h-7zM13.5 10.5h7v10h-7zM3.5 13.5h7v7h-7z"/></svg>
+          <span data-i18n="nav.overview">概览</span>
+        </a>
+        <a class="nav-link" href="#/tasks" data-route="tasks">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h10" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+          <span data-i18n="nav.tasks">任务</span>
+          <b class="nav-count" id="nav-task-count" hidden>0</b>
+        </a>
+        <a class="nav-link" href="#/cachelab" data-route="cachelab">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M14.5 3.6A9 9 0 0 1 20.4 9.5H14.5z" opacity=".55"/></svg>
+          <span>Cache Lab</span>
+        </a>
+        <a class="nav-link" href="#/system" data-route="system">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8zm8.6 3.4c0 .5 0 1-.1 1.4l2 1.6-1.9 3.3-2.4-1a7.6 7.6 0 0 1-2.4 1.4l-.4 2.5h-3.8l-.4-2.5a7.6 7.6 0 0 1-2.4-1.4l-2.4 1L4.5 15l2-1.6a8.6 8.6 0 0 1 0-2.8l-2-1.6L6.4 5.7l2.4 1a7.6 7.6 0 0 1 2.4-1.4l.4-2.5h3.8l.4 2.5c.9.3 1.7.8 2.4 1.4l2.4-1 1.9 3.3-2 1.6c.1.4.1.9.1 1.4z"/></svg>
+          <span data-i18n="nav.system">系统</span>
+        </a>
       </nav>
-      <div class="sidebar-note">
-        <span class="eyebrow" data-i18n="note.eyebrow">安全模式</span>
-        <strong data-i18n="note.title">默认只读</strong>
-        <p data-i18n="note.body">写任务进入独立 worktree，并在 auto_readonly 下等待审批。</p>
+
+      <div class="side-foot">
+        <div class="scheduler-card" id="scheduler-card">
+          <span class="pulse-dot" aria-hidden="true"></span>
+          <div>
+            <strong id="scheduler-role" data-i18n="health.schedulerIdle">调度待命</strong>
+            <small id="scheduler-sync" data-i18n="top.waiting">等待同步…</small>
+          </div>
+        </div>
+        <div class="safe-note">
+          <span class="eyebrow" data-i18n="note.eyebrow">安全模式</span>
+          <p data-i18n="note.body">写任务进入独立 worktree，并在 auto_readonly 下等待审批。</p>
+        </div>
       </div>
     </aside>
 
-    <main>
+    <div class="workspace">
       <header class="topbar">
-        <div>
-          <span class="eyebrow" data-i18n="top.eyebrow">本地协作编排</span>
-          <h1 data-i18n="top.title">任务控制台</h1>
+        <div class="topbar-title">
+          <h1 id="view-title" data-i18n="view.overview">概览</h1>
+          <span class="topbar-sub" id="view-subtitle" data-i18n="viewSub.overview">任务、网关与缓存的实时状态</span>
         </div>
-        <div class="top-actions">
+        <div class="topbar-actions">
+          <button class="icon-btn" id="palette-button" data-i18n-title="top.palette" title="命令面板 Ctrl+K" aria-label="Command palette">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="m17.5 15.5 3 3m0-3-3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <kbd>Ctrl K</kbd>
+          </button>
           <div class="lang-toggle" role="tablist" aria-label="Language">
-            <button type="button" class="lang-btn active" data-lang="zh">中文</button>
+            <button type="button" class="lang-btn" data-lang="zh">中</button>
             <button type="button" class="lang-btn" data-lang="en">EN</button>
           </div>
-          <span class="health-chip version-chip" id="version-chip" data-i18n-title="top.version"><i></i>v__LIGHTWORKER_VERSION__</span>
-          <span class="health-chip" id="proxy-health" data-i18n-title="top.overallHealth"><i></i><span data-i18n="top.checking">正在检查代理</span></span>
-          <span class="health-chip gw-chip" id="gw-opencodex"><i></i><span>OpenCodex</span></span>
-          <span class="health-chip gw-chip" id="gw-cliproxyapi"><i></i><span>CLIProxyAPI</span></span>
-          <button class="button ghost danger-outline" id="purge-button" data-i18n="top.purge">清空历史</button>
-          <button class="button ghost" id="refresh-button" data-i18n="top.refresh">刷新</button>
-          <button class="button primary" id="new-task-button" data-i18n="top.new">新建任务</button>
+          <span class="chip gw-mini" id="gw-mini-opencodex" title="OpenCodex"><i></i>OCX</span>
+          <span class="chip gw-mini" id="gw-mini-cliproxyapi" title="CLIProxyAPI"><i></i>CPA</span>
+          <button class="btn ghost" id="refresh-button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 3.8V8h-4.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span data-i18n="top.refresh">刷新</span>
+          </button>
+          <button class="btn ghost danger-outline" id="purge-button" data-i18n="top.purge">清空历史</button>
+          <button class="btn primary" id="new-task-button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+            <span data-i18n="top.new">新建任务</span>
+          </button>
         </div>
       </header>
 
-      <section class="metrics" aria-label="任务统计" data-i18n-aria="metrics.label">
-        <article><span data-i18n="metrics.total">任务总数</span><strong id="metric-total">0</strong><small data-i18n="metrics.totalSub">当前状态库</small></article>
-        <article><span data-i18n="metrics.active">活跃 Worker</span><strong id="metric-active">0</strong><small id="metric-capacity">并发上限 2</small></article>
-        <article><span data-i18n="metrics.approval">待审批</span><strong id="metric-approval">0</strong><small data-i18n="metrics.approvalSub">写入前人工确认</small></article>
-        <article><span data-i18n="metrics.rate">完成率</span><strong id="metric-rate">—</strong><small data-i18n="metrics.rateSub">排除排队任务</small></article>
-        <article><span data-i18n="metrics.cache">DeepSeek 暖缓存</span><strong id="metric-cache">—</strong><small id="metric-cache-detail">样本不足</small></article>
-        <article>
-          <span data-i18n="metrics.gateway">网关状态</span>
-          <div class="gw-list">
-            <span class="gw-item" id="gw-metric-opencodex"><i></i><b>OpenCodex</b><em data-i18n="gw.checking">检查中</em></span>
-            <span class="gw-item" id="gw-metric-cliproxyapi"><i></i><b>CLIProxyAPI</b><em data-i18n="gw.checking">检查中</em></span>
+      <main class="viewport">
+
+        <section class="view" data-view-panel="overview" hidden>
+          <div class="kpi-row">
+            <article class="kpi" id="kpi-total">
+              <header><span data-i18n="metrics.total">任务总数</span><span class="kpi-ico total" aria-hidden="true"></span></header>
+              <strong>0</strong><small data-i18n="metrics.totalSub">当前状态库</small>
+              <div class="kpi-bar"><i></i></div>
+            </article>
+            <article class="kpi" id="kpi-active">
+              <header><span data-i18n="metrics.active">活跃 Worker</span><span class="kpi-ico active" aria-hidden="true"></span></header>
+              <strong>0</strong><small id="metric-capacity">—</small>
+              <div class="kpi-bar"><i></i></div>
+            </article>
+            <article class="kpi" id="kpi-approval">
+              <header><span data-i18n="metrics.approval">待审批</span><span class="kpi-ico approval" aria-hidden="true"></span></header>
+              <strong>0</strong><small data-i18n="metrics.approvalSub">写入前人工确认</small>
+              <div class="kpi-bar"><i></i></div>
+            </article>
+            <article class="kpi" id="kpi-rate">
+              <header><span data-i18n="metrics.rate">完成率</span><span class="kpi-ico rate" aria-hidden="true"></span></header>
+              <strong>—</strong><small data-i18n="metrics.rateSub">排除排队任务</small>
+              <div class="kpi-bar"><i></i></div>
+            </article>
+            <article class="kpi" id="kpi-cache">
+              <header><span data-i18n="metrics.cache">暖缓存命中率</span><span class="kpi-ico cache" aria-hidden="true"></span></header>
+              <strong>—</strong><small id="metric-cache-detail">—</small>
+              <div class="kpi-bar"><i></i></div>
+            </article>
           </div>
-          <small data-i18n="metrics.gatewaySub">连接成功才可委派任务</small>
-        </article>
-      </section>
 
-      <section class="panel cache-panel">
-        <div class="panel-header">
-          <div><span class="eyebrow">Cache Lab</span><h2 data-i18n="cache.title">DeepSeek 缓存 Cohort</h2></div>
-          <span class="health-chip" id="cache-target"><i></i><span data-i18n="cache.waiting">等待样本</span></span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Cohort</th><th data-i18n="cache.colPath">路径 / 模型</th><th data-i18n="cache.colStatus">状态</th><th data-i18n="cache.colSamples">样本</th><th data-i18n="cache.colHit">命中率</th></tr></thead>
-            <tbody id="cache-cohort-body"></tbody>
-          </table>
-        </div>
-      </section>
+          <div class="grid-2">
+            <section class="card">
+              <header class="card-head">
+                <div><span class="eyebrow">Gateways</span><h2 data-i18n="overview.gateways">网关健康</h2></div>
+                <a class="card-link" href="#/system" data-i18n="common.details">详情 →</a>
+              </header>
+              <div class="gw-cards" id="overview-gateways"></div>
+            </section>
+            <section class="card">
+              <header class="card-head">
+                <div><span class="eyebrow">Cache Lab</span><h2 data-i18n="overview.cache">缓存 Cohort 目标</h2></div>
+                <a class="card-link" href="#/cachelab" data-i18n="common.details">详情 →</a>
+              </header>
+              <div id="overview-cache"></div>
+            </section>
+          </div>
 
-      <section class="panel task-panel">
-        <div class="panel-header">
-          <div><span class="eyebrow">Task Board</span><h2 data-i18n="board.title">协作任务</h2></div>
-          <div class="board-tools">
-            <label class="search"><span>⌕</span><input id="search-input" type="search" data-i18n-ph="board.search" placeholder="搜索目标、模型或任务 ID"></label>
+          <div class="grid-2">
+            <section class="card">
+              <header class="card-head">
+                <div><span class="eyebrow">Inbox</span><h2 data-i18n="overview.approvals">审批收件箱</h2></div>
+                <span class="chip" id="approval-count-chip">0</span>
+              </header>
+              <div class="approval-list" id="overview-approvals"></div>
+            </section>
+            <section class="card">
+              <header class="card-head">
+                <div><span class="eyebrow">Recent</span><h2 data-i18n="overview.recent">最近任务</h2></div>
+                <a class="card-link" href="#/tasks" data-i18n="common.allTasks">全部任务 →</a>
+              </header>
+              <div class="recent-list" id="overview-recent"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view-panel="tasks" hidden>
+          <div class="task-toolbar card-flat">
+            <div class="filter-chips" id="filter-chips" role="tablist" aria-label="Filter"></div>
+            <label class="search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              <input id="search-input" type="search" data-i18n-ph="board.search" placeholder="搜索目标、模型或任务 ID">
+            </label>
             <div class="view-toggle" role="tablist">
-              <button type="button" class="view-btn active" data-view="board" data-i18n-title="board.viewBoard" data-i18n="board.board">▦ 看板</button>
-              <button type="button" class="view-btn" data-view="list" data-i18n-title="board.viewList" data-i18n="board.list">☰ 列表</button>
+              <button type="button" class="view-btn active" data-view="board" data-i18n-title="board.viewBoard" data-i18n="board.board">看板</button>
+              <button type="button" class="view-btn" data-view="list" data-i18n-title="board.viewList" data-i18n="board.list">列表</button>
             </div>
           </div>
-        </div>
-        <div class="kanban" id="kanban-board"></div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th data-i18n="board.colTask">任务</th><th data-i18n="board.colRole">角色 / 模型</th><th data-i18n="board.colStatus">状态</th><th data-i18n="board.colTime">创建时间</th><th data-i18n="board.colAction">操作</th></tr></thead>
-            <tbody id="task-body"></tbody>
-          </table>
-          <div class="empty" id="empty-state" hidden>
-            <div class="empty-icon"><img src="/logo.svg" alt="" width="54" height="54"></div><strong data-i18n="board.empty">暂时没有任务</strong><p data-i18n="board.emptySub">创建一个自动规划目标，或提交单个只读 Worker。</p>
+          <div class="kanban" id="kanban-board" hidden></div>
+          <div class="card" id="list-card" hidden>
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th data-i18n="board.colTask">任务</th><th data-i18n="board.colRole">角色 / 模型</th>
+                  <th data-i18n="board.colStatus">状态</th><th data-i18n="board.colTime">创建时间</th>
+                  <th data-i18n="board.colAction">操作</th>
+                </tr></thead>
+                <tbody id="task-body"></tbody>
+              </table>
+            </div>
           </div>
-        </div>
-      </section>
-    </main>
+          <div class="empty" id="empty-state" hidden>
+            <div class="empty-icon"><img src="/logo.svg" alt="" width="56" height="56"></div>
+            <strong data-i18n="board.empty">暂时没有任务</strong>
+            <p data-i18n="board.emptySub">创建一个自动规划目标，或提交单个只读 Worker。</p>
+            <button class="btn primary" data-i18n="top.new" data-open-new>新建任务</button>
+          </div>
+        </section>
+
+        <section class="view" data-view-panel="cachelab" hidden>
+          <div class="card" id="cache-target-card"></div>
+          <section class="card">
+            <header class="card-head">
+              <div><span class="eyebrow">Cohorts</span><h2 data-i18n="cache.title">缓存 Cohort 明细</h2></div>
+            </header>
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Cohort</th><th data-i18n="cache.colPath">网关 / 模型</th>
+                  <th data-i18n="cache.colStatus">状态</th><th data-i18n="cache.colSamples">样本</th>
+                  <th data-i18n="cache.colHit">命中率</th>
+                </tr></thead>
+                <tbody id="cache-cohort-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" data-view-panel="system" hidden>
+          <div class="grid-2">
+            <section class="card"><header class="card-head"><div><span class="eyebrow">Runtime</span><h2 data-i18n="sys.runtime">运行时</h2></div></header><div id="sys-runtime" class="def-grid"></div></section>
+            <section class="card"><header class="card-head"><div><span class="eyebrow">Budget</span><h2 data-i18n="sys.budget">预算与缓存配置</h2></div></header><div id="sys-budget" class="def-grid"></div></section>
+          </div>
+          <section class="card">
+            <header class="card-head"><div><span class="eyebrow">Gateways</span><h2 data-i18n="sys.gateways">网关</h2></div></header>
+            <div class="table-wrap"><table>
+              <thead><tr><th data-i18n="sys.colName">名称</th><th data-i18n="sys.colProto">协议</th><th data-i18n="sys.colCaps">能力</th><th data-i18n="sys.colCred">凭据</th><th data-i18n="sys.colReach">连接</th></tr></thead>
+              <tbody id="sys-gateways"></tbody>
+            </table></div>
+          </section>
+          <section class="card">
+            <header class="card-head"><div><span class="eyebrow">Models</span><h2 data-i18n="sys.models">模型路由</h2></div></header>
+            <div class="table-wrap"><table>
+              <thead><tr><th data-i18n="sys.colModel">模型</th><th data-i18n="sys.colProvider">提供方</th><th data-i18n="sys.colBilling">计费</th><th data-i18n="sys.colPrimary">主网关</th><th data-i18n="sys.colFallback">备用</th><th data-i18n="sys.colCaps">能力</th><th data-i18n="sys.colRoutable">可路由</th></tr></thead>
+              <tbody id="sys-models"></tbody>
+            </table></div>
+          </section>
+          <section class="card">
+            <header class="card-head"><div><span class="eyebrow">Profiles</span><h2 data-i18n="sys.profiles">Worker Profile</h2></div></header>
+            <div class="table-wrap"><table>
+              <thead><tr><th data-i18n="sys.colProfile">Profile</th><th data-i18n="sys.colDesc">用途</th><th data-i18n="sys.colModel">模型</th><th data-i18n="sys.colEffort">强度</th><th data-i18n="sys.colGateway">网关</th><th>Kinds</th></tr></thead>
+              <tbody id="sys-profiles"></tbody>
+            </table></div>
+          </section>
+        </section>
+
+      </main>
+    </div>
   </div>
 
   <dialog id="task-dialog" class="modal">
     <form method="dialog" class="modal-card" id="task-form-shell">
       <div class="modal-header">
         <div><span class="eyebrow">Dispatch</span><h2 data-i18n="dlg.title">创建协作任务</h2></div>
-        <button type="button" class="icon-button" id="close-task-dialog" data-i18n-aria="common.close" aria-label="关闭">×</button>
+        <button type="button" class="icon-btn" id="close-task-dialog" data-i18n-aria="common.close" aria-label="关闭">×</button>
       </div>
       <div class="tabs" role="tablist">
         <button type="button" class="tab active" data-tab="orchestrate" data-i18n="dlg.tabOrch">自动规划</button>
@@ -134,7 +260,7 @@
           <label><span data-i18n="dlg.maxSub">最大子任务</span><input id="orchestrate-max" type="number" min="1" max="6" value="6"></label>
         </div>
         <label><span data-i18n="dlg.contextPack">共享 Context Pack（可选，最多 32KiB）</span><textarea id="orchestrate-context-pack" rows="4" data-i18n-ph="dlg.contextPackPh" placeholder="仅填写多次任务都需要的稳定、已审阅上下文；不要填密钥或动态日志。"></textarea></label>
-        <button type="button" class="button primary wide" id="submit-orchestrate" data-i18n="dlg.submitOrch">生成任务 DAG</button>
+        <button type="button" class="btn primary wide" id="submit-orchestrate" data-i18n="dlg.submitOrch">生成任务 DAG</button>
       </div>
 
       <div class="tab-pane" id="pane-single">
@@ -153,7 +279,7 @@
         </div>
         <label><span data-i18n="dlg.success">成功条件</span><input id="single-success" data-i18n-ph="dlg.successPh" placeholder="例如：列出文件证据并给出可复现命令"></label>
         <label><span data-i18n="dlg.contextPack">共享 Context Pack（可选，最多 32KiB）</span><textarea id="single-context-pack" rows="4" data-i18n-ph="dlg.contextPackPh2" placeholder="相同 Cohort 的 Worker 使用完全相同的稳定上下文。"></textarea></label>
-        <button type="button" class="button primary wide" id="submit-single" data-i18n="dlg.submitSingle">提交 Worker</button>
+        <button type="button" class="btn primary wide" id="submit-single" data-i18n="dlg.submitSingle">提交 Worker</button>
       </div>
     </form>
   </dialog>
@@ -161,17 +287,42 @@
   <aside class="drawer" id="task-drawer" aria-hidden="true">
     <div class="drawer-head">
       <div><span class="eyebrow" id="detail-kind">Task</span><h2 id="detail-title" data-i18n="detail.title">任务详情</h2></div>
-      <button class="icon-button" id="close-drawer" data-i18n-aria="common.close" aria-label="关闭">×</button>
+      <button class="icon-btn" id="close-drawer" data-i18n-aria="common.close" aria-label="关闭">×</button>
     </div>
     <div class="detail-meta" id="detail-meta"></div>
     <div class="detail-actions" id="detail-actions"></div>
-    <section><h3 data-i18n="detail.objective">目标</h3><p class="objective" id="detail-objective"></p></section>
-    <section><h3 data-i18n="detail.route">路由审计</h3><pre id="detail-route">等待调度…</pre></section>
-    <section><h3 data-i18n="detail.governance">预算与 Schema</h3><pre id="detail-governance">尚无运行数据…</pre></section>
-    <section><h3 data-i18n="detail.result">结构化结果</h3><pre id="detail-result">等待 Worker 返回…</pre></section>
-    <section><h3 data-i18n="detail.events">事件时间线</h3><div class="timeline" id="detail-events"></div></section>
+    <div class="drawer-tabs" role="tablist">
+      <button type="button" class="dtab active" data-dtab="overview" data-i18n="detail.tabOverview">概览</button>
+      <button type="button" class="dtab" data-dtab="result" data-i18n="detail.tabResult">结果</button>
+      <button type="button" class="dtab" data-dtab="governance" data-i18n="detail.tabGovernance">治理</button>
+      <button type="button" class="dtab" data-dtab="events" data-i18n="detail.tabEvents">时间线</button>
+    </div>
+    <div class="dpane active" data-dpane="overview">
+      <section><h3 data-i18n="detail.objective">目标</h3><p class="objective" id="detail-objective"></p></section>
+      <section><h3 data-i18n="detail.route">路由审计</h3><pre id="detail-route" class="code"></pre></section>
+    </div>
+    <div class="dpane" data-dpane="result">
+      <section><h3 data-i18n="detail.result">结构化结果</h3><pre id="detail-result" class="code"></pre></section>
+    </div>
+    <div class="dpane" data-dpane="governance">
+      <section><h3 data-i18n="detail.governance">预算与 Schema</h3><pre id="detail-governance" class="code"></pre></section>
+    </div>
+    <div class="dpane" data-dpane="events">
+      <section><h3 data-i18n="detail.events">事件时间线</h3><div class="timeline" id="detail-events"></div></section>
+    </div>
   </aside>
   <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+
+  <dialog id="palette" class="palette-modal">
+    <div class="palette">
+      <div class="palette-input">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input id="palette-search" type="text" data-i18n-ph="palette.ph" placeholder="搜索任务或命令…" autocomplete="off">
+        <kbd>Esc</kbd>
+      </div>
+      <div class="palette-list" id="palette-list" role="listbox"></div>
+    </div>
+  </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="/app.js?v=__LIGHTWORKER_VERSION__" defer></script>

@@ -139,7 +139,10 @@ def test_catalog_revision_is_locked_per_task(tmp_path: Path) -> None:
     cfg = capability_configured(tmp_path)
     cfg.gateways["opencodex"] = GatewayConfig(
         "opencodex",
-        "http://127.0.0.1:10100/v1",
+        # Unreachable port: keeps the test hermetic. catalog_snapshot merges the
+        # live /models listing when routes are missing from the file catalog, so
+        # a running OpenCodex proxy on the default port would inflate model_count.
+        "http://127.0.0.1:9/v1",
         "native",
         model_catalog=str(catalog),
         capabilities=(

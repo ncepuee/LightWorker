@@ -75,7 +75,7 @@ def test_web_health_static_and_mutation_token():
             assert "test-token" in html
             assert "/favicon.svg" in html
             assert "/lightworker-app-icon.png" in html
-            assert 'type="button" class="icon-button" id="close-task-dialog"' in html
+            assert 'class="icon-btn" id="close-task-dialog"' in html
             assert 'id="single-gateway"' in html
             assert 'id="single-profile"' in html
             assert 'id="single-channel"' in html
