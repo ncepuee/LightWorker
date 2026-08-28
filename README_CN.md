@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="lightworker/web/logo.svg" alt="LightWorker task graph converging into an execution core" width="112">
+  <img src="web/logo.svg" alt="LightWorker task graph converging into an execution core" width="112">
 </p>
 
 <h1 align="center">LightWorker</h1>

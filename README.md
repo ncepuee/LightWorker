@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="lightworker/web/logo.svg" alt="LightWorker task graph converging into an execution core" width="112">
+  <img src="web/logo.svg" alt="LightWorker task graph converging into an execution core" width="112">
 </p>
 
 <h1 align="center">LightWorker</h1>
@@ -173,9 +173,9 @@ The Web service may only bind to the literal loopback addresses `127.0.0.1` or `
 
 Brand assets:
 
-- `lightworker/web/logo.svg`: LightWorker's "converging execution core" vector mark, used in the sidebar and empty states.
-- `lightworker/web/favicon.svg`: an optically corrected 16/32 px dark favicon.
-- `lightworker/web/lightworker-app-icon.png`: a high-resolution app icon generated with GPT Image, used as `apple-touch-icon` and as a brand asset.
+- `web/logo.svg`: LightWorker's "converging execution core" vector mark, used in the sidebar and empty states.
+- `web/favicon.svg`: an optically corrected 16/32 px dark favicon.
+- `web/lightworker-app-icon.png`: a high-resolution app icon generated with GPT Image, used as `apple-touch-icon` and as a brand asset.
 
 If the user Codex configuration enables many MCP servers, we recommend letting Workers use an isolated configuration so that each subtask does not repeatedly load unrelated tools:
 
