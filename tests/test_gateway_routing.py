@@ -1,9 +1,16 @@
-
 from pathlib import Path
 
 import pytest
 
-from lightworker.config import Config, GatewayConfig, ModelRoute, load_config, write_default_config
+from lightworker.config import (
+    DEFAULT_OPENCODEX_CAPABILITIES,
+    WORKBUDDY_MODELS,
+    Config,
+    GatewayConfig,
+    ModelRoute,
+    load_config,
+    write_default_config,
+)
 from lightworker.models import RunResult, TaskSpec
 from lightworker.policy import PolicyError
 from lightworker.scheduler import Scheduler
@@ -24,6 +31,197 @@ def configured(tmp_path: Path) -> Config:
         )
     }
     return cfg
+
+
+def capability_configured(tmp_path: Path) -> Config:
+    cfg = configured(tmp_path)
+    cfg.gateways = {
+        "opencodex": GatewayConfig(
+            "opencodex",
+            "http://127.0.0.1:10100/v1",
+            "native",
+            capabilities=("responses", "web_search", "codex_tools", "native_subagents"),
+        ),
+        "cliproxyapi": GatewayConfig(
+            "cliproxyapi",
+            "http://127.0.0.1:8317/v1",
+            "translated",
+            api_key_env="CLIPROXYAPI_CLIENT_KEY",
+            capabilities=("translated_responses", "codex_tools"),
+        ),
+    }
+    cfg.model_routes["workbuddy/hy3"] = ModelRoute(
+        primary="opencodex",
+        provider="workbuddy",
+        billing_class="workbuddy-credit",
+        required_capabilities=("chat_to_responses",),
+    )
+    cfg.allowed_models = (*cfg.allowed_models, "workbuddy/hy3")
+    return cfg
+
+
+def test_required_capability_filters_incompatible_fallback(tmp_path: Path) -> None:
+    cfg = capability_configured(tmp_path)
+    route = cfg.resolve_route(
+        "low",
+        "deepseek/deepseek-v4-flash",
+        required_capabilities=("web_search",),
+    )
+    assert route.gateway == "opencodex"
+    assert route.fallback_gateway is None
+    assert "web_search" in route.capabilities
+
+    with pytest.raises(ValueError, match="does not provide required capabilities"):
+        cfg.resolve_route(
+            "low",
+            "deepseek/deepseek-v4-flash",
+            "cliproxyapi",
+            required_capabilities=("web_search",),
+        )
+
+
+def test_native_subagent_channel_requires_gateway_capability(tmp_path: Path) -> None:
+    cfg = capability_configured(tmp_path)
+    service = LightWorkerService(cfg, TaskStore(cfg.db_path), None)  # type: ignore[arg-type]
+    created = service.delegate_task({
+        "objective": "implement a bounded change with the installed native subagent",
+        "workspace": str(tmp_path),
+        "kind": "execute",
+        "model": "gpt-5.6-luna",
+        "execution_channel": "native_subagent",
+        "mode": "auto_readonly",
+    })
+    task = service.task(created["task_id"])
+    assert task["execution_channel"] == "native_subagent"
+    assert task["required_capabilities"] == ["native_subagents"]
+    assert task["route_capabilities"] == ["codex_tools", "native_subagents", "responses", "web_search"]
+
+
+def test_chat_only_workbuddy_route_fails_closed(tmp_path: Path) -> None:
+    cfg = capability_configured(tmp_path)
+    service = LightWorkerService(cfg, TaskStore(cfg.db_path), None)  # type: ignore[arg-type]
+    with pytest.raises(PolicyError, match="chat_to_responses"):
+        service.delegate_task({
+            "objective": "summarize with WorkBuddy",
+            "workspace": str(tmp_path),
+            "model": "workbuddy/hy3",
+            "reasoning_effort": "low",
+        })
+
+
+def test_workbuddy_route_is_auditable_when_translation_exists(tmp_path: Path) -> None:
+    cfg = capability_configured(tmp_path)
+    cfg.gateways["opencodex"] = GatewayConfig(
+        "opencodex",
+        "http://127.0.0.1:10100/v1",
+        "native",
+        capabilities=(
+            "responses", "web_search", "codex_tools", "native_subagents", "chat_to_responses"
+        ),
+    )
+    service = LightWorkerService(cfg, TaskStore(cfg.db_path), None)  # type: ignore[arg-type]
+    created = service.delegate_task({
+        "objective": "summarize with WorkBuddy",
+        "workspace": str(tmp_path),
+        "model": "workbuddy/hy3",
+        "reasoning_effort": "low",
+    })
+    task = service.task(created["task_id"])
+    assert (task["provider"], task["billing_class"], task["gateway"]) == (
+        "workbuddy", "workbuddy-credit", "opencodex"
+    )
+    assert task["required_capabilities"] == ["chat_to_responses"]
+
+
+def test_catalog_revision_is_locked_per_task(tmp_path: Path) -> None:
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"models":[{"slug":"workbuddy/hy3"}]}', encoding="utf-8")
+    cfg = capability_configured(tmp_path)
+    cfg.gateways["opencodex"] = GatewayConfig(
+        "opencodex",
+        "http://127.0.0.1:10100/v1",
+        "native",
+        model_catalog=str(catalog),
+        capabilities=(
+            "responses", "web_search", "codex_tools", "native_subagents", "chat_to_responses"
+        ),
+    )
+    store = TaskStore(cfg.db_path)
+    service = LightWorkerService(cfg, store, None)  # type: ignore[arg-type]
+    created = service.delegate_task({
+        "objective": "inspect with WorkBuddy",
+        "workspace": str(tmp_path),
+        "model": "workbuddy/hy3",
+    })
+    task = service.task(created["task_id"])
+    assert len(task["catalog_revision"]) == 64
+    snapshot = cfg.catalog_snapshot("opencodex")
+    assert snapshot["model_count"] == 1
+    assert snapshot["workbuddy_model_count"] == 1
+
+    catalog.write_text(
+        '{"models":[{"slug":"workbuddy/hy3"},{"slug":"workbuddy/deepseek-v4-flash"}]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(PolicyError, match="Model catalog changed"):
+        from lightworker.policy import validate_task
+
+        validate_task(store.get_spec(created["task_id"]), cfg)
+
+    replacement = service.delegate_task({
+        "objective": "inspect the refreshed catalog",
+        "workspace": str(tmp_path),
+        "model": "workbuddy/hy3",
+    })
+    assert service.task(replacement["task_id"])["catalog_revision"] != task["catalog_revision"]
+
+
+def test_execute_approval_is_bound_to_presented_scope(tmp_path: Path) -> None:
+    cfg = capability_configured(tmp_path)
+    store = TaskStore(cfg.db_path)
+    service = LightWorkerService(cfg, store, None)  # type: ignore[arg-type]
+    created = service.delegate_task({
+        "objective": "change one file",
+        "workspace": str(tmp_path),
+        "kind": "execute",
+        "mode": "auto_readonly",
+        "allowed_paths": ["README.md"],
+    })
+    task = service.task(created["task_id"])
+    assert task["approval_id"].startswith("approval-")
+    assert len(task["approval_scope_digest"]) == 64
+    assert task["approval_scope"]["write_scope"] == "isolated_git_worktree"
+    assert task["approval_scope"]["allowed_paths"] == ["README.md"]
+
+    with pytest.raises(PolicyError, match="does not match"):
+        service.approve(created["task_id"], task["approval_id"], "0" * 64)
+    assert service.task(created["task_id"])["status"] == "awaiting_approval"
+
+    approved = service.approve(
+        created["task_id"], task["approval_id"], task["approval_scope_digest"]
+    )
+    assert approved["status"] == "queued"
+    event_types = [event["event_type"] for event in service.events(created["task_id"])["events"]]
+    assert "approval.requested" in event_types
+    assert "approval.granted" in event_types
+    assert "worker.dispatch.accepted" in event_types
+
+
+def test_approval_rejects_scope_mutated_after_presentation(tmp_path: Path) -> None:
+    cfg = capability_configured(tmp_path)
+    store = TaskStore(cfg.db_path)
+    service = LightWorkerService(cfg, store, None)  # type: ignore[arg-type]
+    created = service.delegate_task({
+        "objective": "change one file",
+        "workspace": str(tmp_path),
+        "kind": "execute",
+    })
+    task = service.task(created["task_id"])
+    spec = store.get_spec(created["task_id"])
+    spec.allowed_paths = ["different.txt"]
+    store.update_spec(created["task_id"], spec)
+    with pytest.raises(PolicyError, match="scope changed"):
+        service.approve(created["task_id"], task["approval_id"], task["approval_scope_digest"])
 
 
 def test_route_is_sticky_and_maps_fallback_upstream_model(tmp_path: Path) -> None:
@@ -199,6 +397,65 @@ def test_new_toml_parses_protocol_modes(tmp_path: Path) -> None:
     path.write_text('''[runner]\ndefault_gateway="opencodex"\n[gateways.opencodex]\nbase_url="http://127.0.0.1:10100/v1"\nresponse_mode="native"\n[gateways.cliproxyapi]\nbase_url="http://127.0.0.1:8317/v1"\nresponse_mode="translated"\napi_key_env="CLIPROXYAPI_CLIENT_KEY"\n[model_routes."deepseek/deepseek-v4-flash"]\nprimary="opencodex"\nfallback=["cliproxyapi"]\n[model_routes."deepseek/deepseek-v4-flash".upstream_models]\ncliproxyapi="deepseek-v4-flash"\n''', encoding="utf-8")
     cfg = load_config(home=tmp_path / "state", config_path=path)
     assert cfg.gateways["cliproxyapi"].api_key_env == "CLIPROXYAPI_CLIENT_KEY"
+
+
+def test_default_config_advertises_tested_opencodex_chat_translation(tmp_path: Path) -> None:
+    cfg = Config(home=tmp_path / "state")
+    write_default_config(cfg)
+    loaded = load_config(home=cfg.home)
+    assert loaded.gateways["opencodex"].capabilities == DEFAULT_OPENCODEX_CAPABILITIES
+    assert loaded.max_concurrency == 3
+    assert loaded.root_max_concurrency == 3
+    assert set(WORKBUDDY_MODELS) <= set(loaded.allowed_models)
+    assert set(WORKBUDDY_MODELS) <= set(loaded.model_routes)
+
+
+def test_all_workbuddy_models_route_through_opencodex(tmp_path: Path) -> None:
+    cfg = Config(home=tmp_path / "state")
+    write_default_config(cfg)
+    loaded = load_config(home=cfg.home)
+    service = LightWorkerService(loaded, TaskStore(loaded.db_path), None)  # type: ignore[arg-type]
+
+    for model in WORKBUDDY_MODELS:
+        created = service.delegate_task({
+            "objective": f"verify explicit route for {model}",
+            "workspace": str(tmp_path),
+            "model": model,
+        })
+        task = service.task(created["task_id"])
+        assert (task["model"], task["upstream_model"], task["gateway"]) == (
+            model, model, "opencodex"
+        )
+        assert task["provider"] == "workbuddy"
+        assert task["required_capabilities"] == ["chat_to_responses"]
+
+
+def test_workbuddy_route_fails_closed_when_catalog_model_is_missing(tmp_path: Path) -> None:
+    cfg = Config(home=tmp_path / "state")
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"models":[{"slug":"workbuddy/hy3"}]}', encoding="utf-8")
+    cfg.codex_model_catalog = str(catalog)
+    write_default_config(cfg)
+    loaded = load_config(home=cfg.home)
+    service = LightWorkerService(loaded, TaskStore(loaded.db_path), None)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="not present.*catalog"):
+        service.delegate_task({
+            "objective": "do not silently fall back to the dashboard model",
+            "workspace": str(tmp_path),
+            "model": "workbuddy/kimi-k3-1",
+        })
+
+
+def test_new_toml_parses_gateway_capabilities_and_provider_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('''[runner]\ndefault_gateway="opencodex"\n[gateways.opencodex]\nbase_url="http://127.0.0.1:10100/v1"\nresponse_mode="native"\ncapabilities=["responses","web_search","native_subagents"]\n[model_routes."workbuddy/hy3"]\nprimary="opencodex"\nprovider="workbuddy"\nbilling_class="workbuddy-credit"\nrequired_capabilities=["chat_to_responses"]\n[policy]\nallowed_models=["workbuddy/hy3"]\n''', encoding="utf-8")
+    cfg = load_config(home=tmp_path / "state", config_path=path)
+    assert cfg.gateways["opencodex"].capabilities == (
+        "native_subagents", "responses", "web_search"
+    )
+    assert cfg.model_routes["workbuddy/hy3"].provider == "workbuddy"
+    assert cfg.model_routes["workbuddy/hy3"].required_capabilities == ("chat_to_responses",)
 
 
 def test_isolated_init_values_round_trip_into_gateway_registry(tmp_path: Path) -> None:

@@ -1,4 +1,3 @@
-
 """Deterministic, explicit cache inputs for LightWorker.
 
 This module deliberately never opens a workspace or expands a path.  A context
@@ -20,7 +19,7 @@ CONTEXT_PACK_DEFAULT_VERSION = "context-pack.v1"
 CONTEXT_PACK_MAX_BYTES = 32 * 1024
 CACHE_WINDOW_MAX_SECONDS = 31 * 24 * 60 * 60
 CACHE_COHORT_VERSION = "cache_cohort.v2"
-PROMPT_PROTOCOL_VERSION = "lightworker.prompt.v4"
+PROMPT_PROTOCOL_VERSION = "lightworker.prompt.v5"
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _LIKELY_SECRET = re.compile(
     r"(?ix)(?:"
@@ -202,6 +201,7 @@ def configure_task_cache(cfg: Any, spec: Any, context_pack: object = ...) -> Non
         "isolated_user_config": bool(cfg.codex_ignore_user_config),
         "gateway_endpoint": gateway_config.base_url,
         "model_catalog": gateway_config.model_catalog,
+        "catalog_revision": spec.catalog_revision,
     }
     spec.cache_cohort = cache_cohort_v2(
         gateway=str(spec.gateway or "legacy"),
@@ -215,7 +215,12 @@ def configure_task_cache(cfg: Any, spec: Any, context_pack: object = ...) -> Non
         sandbox=str(spec.sandbox),
         context_pack_hash=spec.context_pack_hash,
         config_scope=config_scope,
-        tool_contract=cfg.cache_tool_contract,
+        tool_contract={
+            "declared": cfg.cache_tool_contract,
+            "execution_channel": spec.execution_channel,
+            "required_capabilities": sorted(spec.required_capabilities),
+            "route_capabilities": sorted(spec.route_capabilities),
+        },
     )
     spec.metadata = {
         **spec.metadata,

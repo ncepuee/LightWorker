@@ -1,68 +1,46 @@
 # Changelog
 
-All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## 0.4.0 - 2026-08-08
 
-## [0.2.0] - 2026-08-02
+本地开发版，尚未同步到 `lightworker-release` 或 GitHub。
 
 ### Added
 
-- Named `planner`, `fast_worker`, `deep_worker`, and `reviewer` profiles with explicit gateway, model, reasoning, and task-kind contracts.
-- Dual-gateway routing for OpenCodex and CLIProxyAPI, including native/translated response-mode audits, bounded fallback, and manual deep escalation.
-- Prompt Protocol v4 and Cache Cohort v2, isolating cache identity by gateway, response mode, upstream model, reasoning effort, profile, schema, sandbox, Context Pack, configuration scope, and tool contract.
-- Explicit, bounded Context Packs treated as untrusted reference data, with credential screening and content-free public audit fields.
-- Materialized cold/warm/indeterminate cache samples, token-weighted verified metrics, per-cohort 90% target certification, and historical event migration receipts.
-- Cache-aware but root-fair scheduling, allowing at most one extra same-cohort affinity selection.
-- Cache metrics in the Web Console, CLI, HTTP API, and MCP; task detail now includes route, schema, budget, and cache audits.
+- 管理页新增「清空历史」按钮：一键删除已结束（完成/失败/阻塞/孤立/取消）的任务及其事件与用量记录，活跃与待审批任务不受影响。
+- 新增 `POST /api/tasks/purge` 接口与 `store.purge_terminal_tasks`，删除后自动清理孤立的 root budget 记录。
+- 新增 `image` 任务类型与 `image_worker` profile（骨架），预留 WorkBuddy Bridge 0.9.0 生图模型路由（`workbuddy-image/hunyuan-image-v3.0-art`），为下一版生图委派做准备。
+
+### Fixed
+
+- worker profile 校验的合法任务类型改为引用 `KNOWN_KINDS`，新增任务类型时不再因硬编码列表导致启动失败。
+
+## 0.3.0 - 2026-08-05
+
+本地开发版升级，尚未同步到 `lightworker-release` 或 GitHub。
+
+### Added
+
+- 能力感知网关路由和兼容性回退过滤。
+- `lightworker_worker` / `native_subagent` 执行通道。
+- WorkBuddy 提供方与计费类别审计。
+- 模型级 `required_capabilities`；Chat-only WorkBuddy Bridge 默认要求 `chat_to_responses`。
+- OpenCodex 模型目录 revision、模型数和 WorkBuddy 模型数快照。
+- 绑定权限范围的审批 ID 与 SHA-256 digest。
+- Worker 环境变量显式 allowlist。
 
 ### Changed
 
-- DeepSeek cache certification now requires at least 20 route-verified warm samples from one strict cohort; gateways and Context Packs are never combined to claim success.
-- Worker results use deterministic schema normalization, bounded raw-result retention, and content-free prompt metadata.
-- Public package keeps user Codex/MCP configuration isolated by default; compatibility mode remains an explicit opt-in.
+- Prompt 协议升级到 `lightworker.prompt.v5`，缓存 cohort 纳入执行通道、能力和目录 revision。
+- 本地管理页显示提供方、执行通道、网关能力和审批范围。
+- 本地管理页侧栏与健康接口显示由服务端注入的当前版本号。
+- 经真实生成验证后，为 OpenCodex 网关声明 `chat_to_responses`，开放 `workbuddy/hy3` 的 LightWorker 路由。
+- 对齐 WorkBuddy Bridge 0.5.0，自适应开放 11 个显式 WorkBuddy 模型入口，并在目录缺失时失败关闭。
+- 全局 Worker 与单根任务并发上限从 2 提升为 3。
+- Worktree 创建前检查本地与远程 tracking ref，创建后验证 HEAD 和目录。
 
-### Fixed
+### Safety
 
-- Prevented duplicate terminal usage events from inflating cache metrics, including providers that omit event IDs.
-- Reclassified legacy or mismatched-route telemetry as indeterminate so older samples cannot satisfy the new target.
-- Bounded cache windows and completed historical usage backfill in transactional batches.
-- Preserved gateway authentication while filtering unselected provider credentials from Worker environments.
-- Restored favicon and packaged Web/Schema resources for wheel and sdist installations.
-
-### Security
-
-- Context Pack content is JSON encoded under an explicit untrusted-data boundary and is never returned by public task APIs.
-- Common token, password, API-key, certificate, local database, runtime, and authentication-file patterns are excluded from public source packaging.
-- No API keys, local model catalogs, databases, logs, task results, or machine-specific paths are included in the release.
-
-## [0.1.1] - 2026-08-02
-
-### Added
-
-- Cache-friendly Prompt Protocol v2 with deterministic list and routing-policy serialization.
-- Content-free prompt, stable-prefix, schema, gateway, and cache-cohort SHA-256 fingerprints in `worker.prompt` events.
-- Normalized `worker.usage` events for OpenAI-compatible and DeepSeek cache token fields, including cache hit rate when available.
-- Regression coverage for prompt stability, worktree-aware execution context, content-free fingerprint telemetry, and usage parsing.
-- Tag CI checks, Python 3.12 coverage, and clean sdist installation verification.
-
-### Fixed
-
-- Moved stable safety, output, and role instructions ahead of task-specific content so compatible providers can reuse the common prompt prefix.
-- Worker prompts now report the resolved execution worktree instead of the original repository when write or review tasks run in isolation.
-- Added and refreshed README language navigation, repository branding, and browser favicon support delivered since v0.1.0.
-
-### Security
-
-- Cache telemetry records hashes and token counts only; prompt text, objectives, workspace paths, gateway URLs, catalogs, and credentials are not copied into the new events.
-- Workers remain short-lived and `--ephemeral`; v0.1.1 does not share provider sessions, response IDs, tool state, or task results across agents.
-
-## [0.1.0] - 2026-08-01
-
-### Added
-
-- Local-first task DAG runner for Codex-compatible workers with zero third-party Python runtime dependencies.
-- SQLite task state, structured results, events, approvals, cancellation and scheduler standby takeover.
-- Planner, Explorer, Executor and Reviewer workflows with reasoning-aware model routing.
-- Isolated Git worktrees for write tasks; no automatic commit, merge, push or release.
-- Loopback-only local management console with per-session mutation tokens.
-- MCP server and command-line interface backed by the same scheduler and state store.
-- MIT license and cross-platform GitHub Actions checks.
+- 需要 `web_search` 的任务不会回退到不兼容的 translated 网关。
+- 目录中可见但协议不兼容的 WorkBuddy 模型会在提交时失败关闭。
+- 模型目录更新后，旧的未执行任务失败关闭并要求按新 revision 重建。
+- 审批后任务范围发生变化时拒绝执行。

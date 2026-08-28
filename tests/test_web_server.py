@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -7,7 +6,7 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-import lightworker
+from lightworker import __version__
 from lightworker.web_server import create_http_server, host_allowed
 
 
@@ -32,6 +31,9 @@ class FakeService:
     def escalate(self, task_id, profile=None):
         return {"task_id": "task-deep", "status": "queued", "escalation_of": task_id, "profile": profile or "deep_worker"}
 
+    def approve(self, task_id, approval_id=None, scope_digest=None):
+        return {"task_id": task_id, "status": "queued", "approval_id": approval_id, "scope_digest": scope_digest}
+
     def cache_metrics(self, model=None, gateway=None, window_seconds=None):
         return {"model": model, "gateway": gateway, "window_seconds": window_seconds, "warm": {"samples": 0, "cache_hit_rate": None}, "cohorts": [], "target": {"status": "insufficient_samples"}}
 
@@ -50,7 +52,7 @@ def request_json(url: str, method: str = "GET", token: str | None = None, body=N
 
 
 def test_web_health_static_and_mutation_token():
-    static_root = Path(lightworker.__file__).resolve().parent / "web"
+    static_root = Path(__file__).resolve().parents[1] / "web"
     server = create_http_server("127.0.0.1", 0, FakeService(), "test-token", static_root)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -58,7 +60,7 @@ def test_web_health_static_and_mutation_token():
     try:
         status, payload = request_json(f"{base}/api/health")
         assert status == 200
-        assert payload == {"status": "ok", "service": "lightworker"}
+        assert payload == {"status": "ok", "service": "lightworker", "version": __version__}
 
         status, payload = request_json(f"{base}/api/cache-metrics?model=deepseek%2Fdeepseek-v4-flash&window_seconds=60")
         assert status == 200
@@ -68,12 +70,15 @@ def test_web_health_static_and_mutation_token():
             html = response.read().decode("utf-8")
             assert response.status == 200
             assert "LightWorker" in html
+            assert f'aria-label="LightWorker 当前版本">v{__version__}</span>' in html
+            assert "__LIGHTWORKER_VERSION__" not in html
             assert "test-token" in html
             assert "/favicon.svg" in html
             assert "/lightworker-app-icon.png" in html
             assert 'type="button" class="icon-button" id="close-task-dialog"' in html
             assert 'id="single-gateway"' in html
             assert 'id="single-profile"' in html
+            assert 'id="single-channel"' in html
             assert 'id="detail-route"' in html
 
         with urlopen(f"{base}/logo.svg", timeout=2) as response:
@@ -123,6 +128,15 @@ def test_web_health_static_and_mutation_token():
         )
         assert status == 202
         assert payload["profile"] == "deep_worker"
+
+        status, payload = request_json(
+            f"{base}/api/tasks/task-write/approve",
+            method="POST",
+            token="test-token",
+            body={"approval_id": "approval-test", "scope_digest": "a" * 64},
+        )
+        assert status == 200
+        assert payload["approval_id"] == "approval-test"
     finally:
         server.shutdown()
         server.server_close()

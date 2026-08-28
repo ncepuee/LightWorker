@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -18,8 +17,9 @@ KNOWN_STATUSES = {
     "blocked",
     "orphaned",
 }
-KNOWN_KINDS = {"plan", "explore", "execute", "review"}
-READ_ONLY_KINDS = {"plan", "explore", "review"}
+KNOWN_KINDS = {"plan", "explore", "execute", "review", "image"}
+READ_ONLY_KINDS = {"plan", "explore", "review", "image"}
+KNOWN_EXECUTION_CHANNELS = {"lightworker_worker", "native_subagent"}
 
 
 @dataclass(slots=True)
@@ -36,6 +36,15 @@ class TaskSpec:
     upstream_model: str | None = None
     response_mode: str | None = None
     fallback_gateway: str | None = None
+    provider: str | None = None
+    billing_class: str | None = None
+    execution_channel: str = "lightworker_worker"
+    required_capabilities: list[str] = field(default_factory=list)
+    route_capabilities: list[str] = field(default_factory=list)
+    catalog_revision: str | None = None
+    approval_id: str | None = None
+    approval_scope_digest: str | None = None
+    approval_scope: dict[str, Any] = field(default_factory=dict)
     cache_cohort: str | None = None
     context_pack_name: str | None = None
     context_pack_version: str | None = None
@@ -93,6 +102,15 @@ def public_task(row: dict[str, Any]) -> dict[str, Any]:
         "upstream_model",
         "response_mode",
         "fallback_gateway",
+        "provider",
+        "billing_class",
+        "execution_channel",
+        "required_capabilities",
+        "route_capabilities",
+        "catalog_revision",
+        "approval_id",
+        "approval_scope_digest",
+        "approval_scope",
         "cache_cohort",
         "context_pack_name",
         "context_pack_version",

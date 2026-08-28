@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -9,6 +8,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from .approval import stamp_approval
 from .cache import configure_task_cache
 from .config import Config
 from .instance_lock import InstanceLock
@@ -213,11 +213,19 @@ class Scheduler:
         try:
             spec = self.store.get_spec(task_id)
             if not spec.gateway:
-                route = self.cfg.resolve_route(spec.reasoning_effort, spec.model)
+                route = self.cfg.resolve_route(
+                    spec.reasoning_effort,
+                    spec.model,
+                    required_capabilities=spec.required_capabilities,
+                )
                 spec.gateway = route.gateway
                 spec.upstream_model = route.upstream_model
                 spec.response_mode = route.response_mode
                 spec.fallback_gateway = route.fallback_gateway
+                spec.provider = route.provider
+                spec.billing_class = route.billing_class
+                spec.route_capabilities = list(route.capabilities)
+                spec.catalog_revision = route.catalog_revision
                 spec.cache_cohort = route.cache_cohort
                 configure_task_cache(self.cfg, spec)
                 self.store.update_spec(task_id, spec)
@@ -251,6 +259,11 @@ class Scheduler:
                     "model": spec.model,
                     "upstream_model": spec.upstream_model,
                     "response_mode": spec.response_mode,
+                    "provider": spec.provider,
+                    "execution_channel": spec.execution_channel,
+                    "required_capabilities": spec.required_capabilities,
+                    "route_capabilities": spec.route_capabilities,
+                    "catalog_revision": spec.catalog_revision,
                     "cache_cohort": spec.cache_cohort,
                 },
             )
@@ -330,7 +343,22 @@ class Scheduler:
             except ValueError as exc:
                 raise PolicyError(f"Invalid planned task {name!r}: {exc}") from exc
             reasoning_effort = selected.reasoning_effort
-            route = self.cfg.resolve_route(reasoning_effort, selected.model, selected.gateway)
+            execution_channel = str(item.get("execution_channel", "lightworker_worker"))
+            raw_capabilities = item.get("required_capabilities", [])
+            if not isinstance(raw_capabilities, list):
+                raise PolicyError(f"Invalid planned task {name!r}: required_capabilities must be an array")
+            required_capabilities = [str(value) for value in raw_capabilities]
+            if execution_channel == "native_subagent" and "native_subagents" not in required_capabilities:
+                required_capabilities.append("native_subagents")
+            try:
+                route = self.cfg.resolve_route(
+                    reasoning_effort,
+                    selected.model,
+                    selected.gateway,
+                    required_capabilities=required_capabilities,
+                )
+            except ValueError as exc:
+                raise PolicyError(f"Invalid planned task {name!r}: {exc}") from exc
             status = "queued"
             if planner.mode == "plan_only" or (planner.mode == "auto_readonly" and kind == "execute"):
                 status = "awaiting_approval"
@@ -351,6 +379,12 @@ class Scheduler:
                 upstream_model=route.upstream_model,
                 response_mode=route.response_mode,
                 fallback_gateway=route.fallback_gateway,
+                provider=route.provider,
+                billing_class=route.billing_class,
+                execution_channel=execution_channel,
+                required_capabilities=list(route.required_capabilities),
+                route_capabilities=list(route.capabilities),
+                catalog_revision=route.catalog_revision,
                 cache_cohort=route.cache_cohort,
                 context_pack_name=planner.context_pack_name,
                 context_pack_version=planner.context_pack_version,
@@ -371,6 +405,8 @@ class Scheduler:
             )
             configure_task_cache(self.cfg, child)
             validate_task(child, self.cfg)
+            if status == "awaiting_approval":
+                stamp_approval(child)
             entries.append((child, status, 0))
         child_ids = self.store.create_tasks(entries)
         for child_id, (child, _, _) in zip(child_ids, entries, strict=True):
@@ -387,8 +423,26 @@ class Scheduler:
                 "upstream_model": child.upstream_model,
                 "reasoning_effort": child.reasoning_effort,
                 "response_mode": child.response_mode,
+                "provider": child.provider,
+                "billing_class": child.billing_class,
+                "execution_channel": child.execution_channel,
+                "required_capabilities": child.required_capabilities,
+                "route_capabilities": child.route_capabilities,
+                "catalog_revision": child.catalog_revision,
                 "verification": "configured",
             })
+            if child.approval_id:
+                self.store.add_event(child_id, "approval.requested", {
+                    "approval_id": child.approval_id,
+                    "scope_digest": child.approval_scope_digest,
+                    "scope_version": child.approval_scope.get("version"),
+                })
+            else:
+                self.store.add_event(child_id, "worker.dispatch.accepted", {
+                    "status": "queued",
+                    "execution_channel": child.execution_channel,
+                    "gateway": child.gateway,
+                })
         return child_ids
 
     def cancel(self, task_id: str) -> bool:

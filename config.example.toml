@@ -1,11 +1,10 @@
-
 # Copy to %LOCALAPPDATA%\LightWorker\config.toml or use `lightworker init`.
 [runner]
-max_concurrency = 2
+max_concurrency = 3
 max_tasks_per_plan = 6
 max_delegation_depth = 1
 max_replans = 2
-root_max_concurrency = 2
+root_max_concurrency = 3
 root_max_attempts = 8
 root_max_retries = 1
 root_max_escalations = 1
@@ -24,9 +23,10 @@ allow_dirty_worktree_source = false
 # Off by default: heuristic redaction cannot guarantee arbitrary secrets are removed.
 retain_redacted_raw_results = false
 codex_command = "codex"
-codex_ignore_user_config = true
+codex_ignore_user_config = false
 default_gateway = "opencodex"
-# For an isolated CLIProxyAPI/OpenCodex worker, keep true and configure both fields below.
+# For an isolated CLIProxyAPI/OpenCodex worker, set true and configure both fields below.
+# codex_ignore_user_config = true
 # codex_base_url = "http://127.0.0.1:10100/v1"
 # codex_model_catalog = "C:\\Users\\you\\.codex\\opencodex-catalog.json"
 
@@ -34,26 +34,143 @@ default_gateway = "opencodex"
 base_url = "http://127.0.0.1:10100/v1"
 response_mode = "native"
 model_catalog = "C:\\Users\\you\\.codex\\opencodex-catalog.json"
+# chat_to_responses is valid when OpenCodex has a tested openai-chat provider,
+# such as workbuddy -> http://127.0.0.1:8787/v1.
+capabilities = ["responses", "web_search", "codex_tools", "native_subagents", "chat_to_responses"]
 enabled = true
 
 [gateways.cliproxyapi]
 base_url = "http://127.0.0.1:8317/v1"
 response_mode = "translated"
 api_key_env = "CLIPROXYAPI_CLIENT_KEY"
+capabilities = ["translated_responses", "codex_tools"]
 enabled = true
 
 [model_routes."deepseek/deepseek-v4-flash"]
 primary = "opencodex"
 fallback = ["cliproxyapi"]
+provider = "deepseek"
 
 [model_routes."deepseek/deepseek-v4-flash".upstream_models]
 opencodex = "deepseek/deepseek-v4-flash"
 cliproxyapi = "deepseek-v4-flash"
 
+# OpenCodex performs Responses -> openai-chat adaptation before calling the
+# chat-only WorkBuddy Bridge. No WorkBuddy secret is stored in LightWorker.
+[model_routes."workbuddy/hy3"]
+primary = "opencodex"
+fallback = []
+provider = "workbuddy"
+billing_class = "workbuddy-credit"
+required_capabilities = ["chat_to_responses"]
+
+[model_routes."workbuddy/hy3".upstream_models]
+opencodex = "workbuddy/hy3"
+
+[model_routes."workbuddy/auto"]
+primary = "opencodex"
+fallback = []
+provider = "workbuddy"
+billing_class = "workbuddy-credit"
+required_capabilities = ["chat_to_responses"]
+
+[model_routes."workbuddy/auto".upstream_models]
+opencodex = "workbuddy/auto"
+
+[model_routes."workbuddy/deepseek-v4-flash"]
+primary = "opencodex"
+fallback = []
+provider = "workbuddy"
+billing_class = "workbuddy-credit"
+required_capabilities = ["chat_to_responses"]
+
+[model_routes."workbuddy/deepseek-v4-flash".upstream_models]
+opencodex = "workbuddy/deepseek-v4-flash"
+
+[model_routes."workbuddy/deepseek-v4-pro"]
+primary = "opencodex"
+fallback = []
+provider = "workbuddy"
+billing_class = "workbuddy-credit"
+required_capabilities = ["chat_to_responses"]
+
+[model_routes."workbuddy/deepseek-v4-pro".upstream_models]
+opencodex = "workbuddy/deepseek-v4-pro"
+
+[model_routes."workbuddy/glm-5.1"]
+primary = "opencodex"
+fallback = []
+provider = "workbuddy"
+billing_class = "workbuddy-credit"
+required_capabilities = ["chat_to_responses"]
+
+[model_routes."workbuddy/glm-5.1".upstream_models]
+opencodex = "workbuddy/glm-5.1"
+
+[model_routes."workbuddy/glm-5.2"]
+primary = "opencodex"
+fallback = []
+provider = "workbuddy"
+billing_class = "workbuddy-credit"
+required_capabilities = ["chat_to_responses"]
+
+[model_routes."workbuddy/glm-5.2".upstream_models]
+opencodex = "workbuddy/glm-5.2"
+
+[model_routes."workbuddy/glm-5v-turbo"]
+primary = "opencodex"
+fallback = []
+provider = "workbuddy"
+billing_class = "workbuddy-credit"
+required_capabilities = ["chat_to_responses"]
+
+[model_routes."workbuddy/glm-5v-turbo".upstream_models]
+opencodex = "workbuddy/glm-5v-turbo"
+
+[model_routes."workbuddy/kimi-k2.6"]
+primary = "opencodex"
+fallback = []
+provider = "workbuddy"
+billing_class = "workbuddy-credit"
+required_capabilities = ["chat_to_responses"]
+
+[model_routes."workbuddy/kimi-k2.6".upstream_models]
+opencodex = "workbuddy/kimi-k2.6"
+
+[model_routes."workbuddy/kimi-k2.7"]
+primary = "opencodex"
+fallback = []
+provider = "workbuddy"
+billing_class = "workbuddy-credit"
+required_capabilities = ["chat_to_responses"]
+
+[model_routes."workbuddy/kimi-k2.7".upstream_models]
+opencodex = "workbuddy/kimi-k2.7"
+
+[model_routes."workbuddy/kimi-k3-1"]
+primary = "opencodex"
+fallback = []
+provider = "workbuddy"
+billing_class = "workbuddy-credit"
+required_capabilities = ["chat_to_responses"]
+
+[model_routes."workbuddy/kimi-k3-1".upstream_models]
+opencodex = "workbuddy/kimi-k3-1"
+
+[model_routes."workbuddy/minimax-m3"]
+primary = "opencodex"
+fallback = []
+provider = "workbuddy"
+billing_class = "workbuddy-credit"
+required_capabilities = ["chat_to_responses"]
+
+[model_routes."workbuddy/minimax-m3".upstream_models]
+opencodex = "workbuddy/minimax-m3"
+
 [models]
 planner = "gpt-5.6-sol"
 explore = "deepseek/deepseek-v4-flash"
-execute = "gpt-5.6-sol"
+execute = "gpt-5.6-luna"
 review = "gpt-5.6-sol"
 fast = "deepseek/deepseek-v4-flash"
 reasoning = "gpt-5.6-sol"
@@ -71,6 +188,14 @@ description = "Perform narrow, repeatable, low-judgment exploration or mechanica
 model = "deepseek/deepseek-v4-flash"
 reasoning_effort = "low"
 allowed_kinds = ["explore", "execute"]
+
+# Executors are the highest-volume workers: a cost-efficient coding model with
+# full reasoning budget keeps quality close to the reasoning model at lower cost.
+[worker_profiles.executor]
+description = "Write, modify, and refactor code to implement already-decided steps in an isolated worktree."
+model = "gpt-5.6-luna"
+reasoning_effort = "max"
+allowed_kinds = ["execute"]
 
 [worker_profiles.deep_worker]
 description = "Handle bounded implementation or investigation that benefits from deeper reasoning."
@@ -96,5 +221,16 @@ allowed_models = [
   "google-antigravity/claude-sonnet-4-6",
   "google-antigravity/claude-opus-4-6-thinking",
   "cursor/kimi-k2.7-code",
-  "cursor/grok-4.5"
+  "cursor/grok-4.5",
+  "workbuddy/auto",
+  "workbuddy/deepseek-v4-flash",
+  "workbuddy/deepseek-v4-pro",
+  "workbuddy/glm-5.1",
+  "workbuddy/glm-5.2",
+  "workbuddy/glm-5v-turbo",
+  "workbuddy/kimi-k2.6",
+  "workbuddy/kimi-k2.7",
+  "workbuddy/kimi-k3-1",
+  "workbuddy/minimax-m3",
+  "workbuddy/hy3"
 ]

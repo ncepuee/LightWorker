@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import argparse
@@ -7,7 +6,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .config import Config, GatewayConfig, load_config, write_default_config
+from .config import (
+    DEFAULT_OPENCODEX_CAPABILITIES,
+    Config,
+    GatewayConfig,
+    load_config,
+    write_default_config,
+)
 from .mcp_server import run_mcp
 from .scheduler import Scheduler
 from .service import LightWorkerService
@@ -59,6 +64,17 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--model")
     submit.add_argument("--profile", help="Configured worker profile")
     submit.add_argument("--gateway", help="Configured gateway name")
+    submit.add_argument(
+        "--execution-channel",
+        choices=["lightworker_worker", "native_subagent"],
+        default="lightworker_worker",
+    )
+    submit.add_argument(
+        "--require-capability",
+        action="append",
+        default=[],
+        help="Repeatable gateway capability such as web_search",
+    )
     submit.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"])
     submit.add_argument(
         "--mode", choices=["plan_only", "auto_readonly", "auto_execute"], default="auto_readonly"
@@ -149,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
                 cfg.codex_base_url,
                 "native",
                 model_catalog=cfg.codex_model_catalog,
+                capabilities=DEFAULT_OPENCODEX_CAPABILITIES,
             )
         path = write_default_config(cfg, overwrite=args.force)
         _json({"home": str(cfg.home), "config": str(path), "database": str(cfg.db_path)})
@@ -195,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
                     "profile": args.profile,
                     "model": args.model,
                     "gateway": args.gateway,
+                    "execution_channel": args.execution_channel,
+                    "required_capabilities": args.require_capability,
                     "reasoning_effort": args.effort,
                     "mode": args.mode,
                     "timeout_seconds": args.timeout or cfg.default_timeout_seconds,
@@ -227,7 +246,12 @@ def main(argv: list[str] | None = None) -> int:
             _json(service.cache_metrics(args.model or None, args.gateway, args.window_seconds))
             return 0
         if args.command == "approve":
-            _json(service.approve(args.task_id))
+            task = service.task(args.task_id)
+            _json(service.approve(
+                args.task_id,
+                task.get("approval_id"),
+                task.get("approval_scope_digest"),
+            ))
             return 0
         if args.command == "cancel":
             _json(service.cancel(args.task_id))

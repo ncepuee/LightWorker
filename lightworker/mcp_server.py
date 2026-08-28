@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -66,6 +65,15 @@ TOOLS: list[dict[str, Any]] = [
                 "model": {"type": "string"},
                 "profile": {"type": "string"},
                 "gateway": {"type": "string"},
+                "execution_channel": {
+                    "type": "string",
+                    "enum": ["lightworker_worker", "native_subagent"],
+                },
+                "required_capabilities": {
+                    "type": "array",
+                    "uniqueItems": True,
+                    "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+                },
                 "reasoning_effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max"]},
                 "mode": {"type": "string", "enum": ["plan_only", "auto_readonly", "auto_execute"]},
                 "timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 86400},
@@ -188,8 +196,12 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Release one task that is awaiting approval into the execution queue.",
         "inputSchema": {
             "type": "object",
-            "properties": {"task_id": {"type": "string"}},
-            "required": ["task_id"],
+            "properties": {
+                "task_id": {"type": "string"},
+                "approval_id": {"type": "string"},
+                "scope_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            },
+            "required": ["task_id", "approval_id", "scope_digest"],
             "additionalProperties": False,
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
@@ -252,7 +264,9 @@ class MCPServer:
             "wait_tasks": lambda a: self.service.wait_tasks(a["task_ids"], float(a.get("timeout_seconds", 30))),
             "get_events": lambda a: self.service.events(a["task_id"], int(a.get("after_id", 0)), int(a.get("limit", 200))),
             "get_cache_metrics": lambda a: self.service.cache_metrics(a.get("model", "deepseek/deepseek-v4-flash"), a.get("gateway"), int(a["window_seconds"]) if a.get("window_seconds") else None),
-            "approve_task": lambda a: self.service.approve(a["task_id"]),
+            "approve_task": lambda a: self.service.approve(
+                a["task_id"], a.get("approval_id"), a.get("scope_digest")
+            ),
             "cancel_task": lambda a: self.service.cancel(a["task_id"]),
             "retry_fallback": lambda a: self.service.retry_fallback(a["task_id"]),
             "escalate_task": lambda a: self.service.escalate(a["task_id"], a.get("profile")),
