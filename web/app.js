@@ -43,6 +43,9 @@ const I18N = {
     'cache.ofTarget': '目标 {r} · 最少 {n} 个暖样本', 'cache.cohortOf': 'Cohort {c}',
     'sys.runtime': '运行时', 'sys.budget': '预算与缓存配置', 'sys.gateways': '网关', 'sys.models': '模型路由', 'sys.profiles': 'Worker Profile',
     'sys.colName': '名称', 'sys.colProto': '协议', 'sys.colCaps': '能力', 'sys.colCred': '凭据', 'sys.colReach': '连接',
+    'sys.colCatalog': '目录', 'sys.catalogCount': '上游目录 {n}', 'sys.allowCount': '白名单 {n}', 'sys.routeCount': '显式路由 {n}',
+    'sys.liveMerged': 'live 合并', 'sys.revisionShort': 'rev {r}', 'sys.funnelHint': '仅白名单内且已声明路由的模型可委派；上游目录仅供参照',
+    'sys.overviewCatalog': '目录 {n}',
     'sys.colModel': '模型', 'sys.colProvider': '提供方', 'sys.colBilling': '计费', 'sys.colPrimary': '主网关', 'sys.colFallback': '备用', 'sys.colRoutable': '可路由',
     'sys.colProfile': 'Profile', 'sys.colDesc': '用途', 'sys.colEffort': '强度', 'sys.colGateway': '网关',
     'sys.home': '状态目录', 'sys.database': '状态库', 'sys.codex': 'Codex CLI', 'sys.scheduler': '调度器',
@@ -112,6 +115,9 @@ const I18N = {
     'cache.ofTarget': 'Target {r} · min {n} warm samples', 'cache.cohortOf': 'Cohort {c}',
     'sys.runtime': 'Runtime', 'sys.budget': 'Budget & Cache Config', 'sys.gateways': 'Gateways', 'sys.models': 'Model Routes', 'sys.profiles': 'Worker Profiles',
     'sys.colName': 'Name', 'sys.colProto': 'Protocol', 'sys.colCaps': 'Capabilities', 'sys.colCred': 'Credential', 'sys.colReach': 'Reachability',
+    'sys.colCatalog': 'Catalog', 'sys.catalogCount': 'Upstream catalog {n}', 'sys.allowCount': 'Allowlist {n}', 'sys.routeCount': 'Explicit routes {n}',
+    'sys.liveMerged': 'live merged', 'sys.revisionShort': 'rev {r}', 'sys.funnelHint': 'Only allowlisted models with a declared route can be delegated; the upstream catalog is informational',
+    'sys.overviewCatalog': 'catalog {n}',
     'sys.colModel': 'Model', 'sys.colProvider': 'Provider', 'sys.colBilling': 'Billing', 'sys.colPrimary': 'Primary', 'sys.colFallback': 'Fallback', 'sys.colRoutable': 'Routable',
     'sys.colProfile': 'Profile', 'sys.colDesc': 'Purpose', 'sys.colEffort': 'Effort', 'sys.colGateway': 'Gateway',
     'sys.home': 'State home', 'sys.database': 'State store', 'sys.codex': 'Codex CLI', 'sys.scheduler': 'Scheduler',
@@ -316,7 +322,7 @@ function renderOverview() {
       <div><b>${escapeHtml(g.name)}</b>${g.default ? ' <span class="default-chip">default</span>' : ''}
         <div class="cap-chips">${caps.length ? caps.map((c) => `<span class="cap-chip">${escapeHtml(c)}</span>`).join('') : '<span class="cap-chip none">no caps</span>'}</div>
       </div>
-      <div class="gw-meta"><em>${ok ? t('gw.online') : t('gw.offline')}</em><small>${escapeHtml(g.response_mode === 'native' ? 'native' : 'translated')}</small></div>
+      <div class="gw-meta"><em>${ok ? t('gw.online') : t('gw.offline')}</em><small>${escapeHtml(g.response_mode === 'native' ? 'native' : 'translated')}${g.catalog?.available ? ` · ${escapeHtml(t('sys.overviewCatalog', { n: g.catalog.model_count ?? '—' }))}` : ''}</small></div>
     </div>`;
   }).join('') || `<p class="pempty">${t('overview.noGateway')}</p>` : `<p class="pempty">${t('overview.noGateway')}</p>`;
 
@@ -501,13 +507,33 @@ function renderSystem() {
     def(t('sys.cacheTarget'), lab.target_hit_rate != null ? `${Math.round(lab.target_hit_rate * 100)}%` : '—') +
     def(t('sys.cacheMin'), `${lab.min_warm_samples ?? '—'}`) +
     def('Cohort', escapeHtml(lab.cohort_version || '—'), true);
+  const catalogCell = (g) => {
+    const c = g.catalog || {};
+    if (!c.available) return '<small>—</small>';
+    const parts = [`${c.model_count ?? '—'}`];
+    if (c.live_merged) parts.push(t('sys.liveMerged'));
+    if (c.workbuddy_model_count) parts.push(`wb ${c.workbuddy_model_count}`);
+    const rev = c.revision ? ` title="${escapeHtml(t('sys.revisionShort', { r: c.revision.slice(0, 12) }))}"` : '';
+    return `<span class="mono-cell"${rev}>${escapeHtml(parts.join(' · '))}</span>`;
+  };
   $('#sys-gateways').innerHTML = (d.gateways || []).map((g) => `<tr>
     <td><b>${escapeHtml(g.name)}</b>${g.default ? ' <span class="default-chip">default</span>' : ''}${g.enabled ? '' : ' <small>disabled</small>'}</td>
     <td>${escapeHtml(g.response_mode === 'native' ? t('protocol.native') : t('protocol.translated'))}</td>
     <td><div class="cap-chips">${(g.capabilities || []).length ? g.capabilities.map((c) => `<span class="cap-chip">${escapeHtml(c)}</span>`).join('') : '<span class="cap-chip none">—</span>'}</div></td>
+    <td>${catalogCell(g)}</td>
     <td>${boolSpan(g.credential_configured, t('sys.yes'), t('sys.no'))}</td>
     <td><span class="reach-cell"><span class="reach-pill ${g.tcp_reachable ? 'yes' : 'no'}">TCP</span><span class="reach-pill ${g.api_reachable ? 'yes' : 'no'}">API</span></span></td>
   </tr>`).join('');
+  const funnel = $('#models-funnel');
+  if (funnel) {
+    const catalogCounts = (d.gateways || []).map((g) => (g.catalog && g.catalog.available && g.catalog.model_count) || 0);
+    const upstream = Math.max(0, ...catalogCounts);
+    funnel.innerHTML = [
+      `<span class="chip" title="${escapeHtml(t('sys.funnelHint'))}">${escapeHtml(t('sys.catalogCount', { n: upstream }))}</span>`,
+      `<span class="chip" title="${escapeHtml(t('sys.funnelHint'))}">${escapeHtml(t('sys.allowCount', { n: (d.allowed_models || []).length }))}</span>`,
+      `<span class="chip" title="${escapeHtml(t('sys.funnelHint'))}">${escapeHtml(t('sys.routeCount', { n: (d.model_routes || []).length }))}</span>`,
+    ].join('');
+  }
   $('#sys-models').innerHTML = (d.model_routes || []).map((r) => `<tr>
     <td class="mono-cell">${escapeHtml(r.model)}</td>
     <td>${escapeHtml(r.provider || '—')}</td>

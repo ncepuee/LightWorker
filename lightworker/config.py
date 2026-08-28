@@ -262,6 +262,7 @@ class Config:
     worker_env_allowlist: tuple[str, ...] = ()
     codex_command: str = "codex"
     codex_ignore_user_config: bool = False
+    codex_sandbox_network_access: bool = False
     codex_base_url: str | None = None
     codex_model_catalog: str | None = None
     default_gateway: str = "legacy"
@@ -587,6 +588,7 @@ def load_config(home: str | Path | None = None, config_path: str | Path | None =
             "retain_redacted_raw_results",
             "codex_command",
             "codex_ignore_user_config",
+            "codex_sandbox_network_access",
             "codex_base_url",
             "codex_model_catalog",
             "default_gateway",
