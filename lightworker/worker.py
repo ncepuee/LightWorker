@@ -599,6 +599,10 @@ class CodexWorker:
         args.extend(["--output-last-message", str(capture_path)])
         if self.cfg.codex_ignore_user_config:
             args.append("--ignore-user-config")
+        if self.cfg.codex_sandbox_network_access:
+            # Keep workspace-write file restrictions; allow outbound network so
+            # release-style tasks can drive gh / git push. Opt-in via config.
+            args.extend(["--config", "sandbox_workspace_write.network_access=true"])
         args.extend(gateway_codex_args(gateway))
         if gateway.model_catalog:
             catalog = str(Path(gateway.model_catalog).expanduser().resolve()).replace("\\", "\\\\")

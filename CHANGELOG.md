@@ -63,3 +63,4 @@
 - 目录中可见但协议不兼容的 WorkBuddy 模型会在提交时失败关闭。
 - 模型目录更新后，旧的未执行任务失败关闭并要求按新 revision 重建。
 - 审批后任务范围发生变化时拒绝执行。
+- 新增 `[runner] codex_sandbox_network_access` 配置（默认关闭）：开启后 Worker 沙箱在保留 workspace-write 文件限制的同时放行出站网络，使 gh / git push 类发布任务成为可能。
