@@ -63,7 +63,9 @@ def redact_text(value: str) -> str:
     return result
 
 
-def build_worker_environment(cfg: Config, gateway: GatewayConfig) -> dict[str, str]:
+def build_worker_environment(
+    cfg: Config, gateway: GatewayConfig, worktree_cwd: Path | None = None
+) -> dict[str, str]:
     """Build a least-privilege environment while preserving pre-registry legacy auth."""
     if gateway.name == "legacy" and not cfg.gateways:
         environment = os.environ.copy()
@@ -75,6 +77,12 @@ def build_worker_environment(cfg: Config, gateway: GatewayConfig) -> dict[str, s
         isolated_codex_home.mkdir(parents=True, exist_ok=True)
         environment["CODEX_HOME"] = str(isolated_codex_home)
         _ensure_local_loopback_no_proxy(environment, isolated_codex_home)
+        if cfg.codex_sandbox_network_access and worktree_cwd is not None:
+            # With the user config isolated, the worktree is an untrusted
+            # project, so codex denies network commands in exec mode even when
+            # sandbox_workspace_write.network_access is set. Trust the worktree
+            # LightWorker itself created (scoped to this exact directory).
+            _ensure_worktree_trust(isolated_codex_home, worktree_cwd)
     if gateway.api_key_env:
         credential = os.environ.get(gateway.api_key_env)
         if not credential:
@@ -92,6 +100,24 @@ def build_worker_environment(cfg: Config, gateway: GatewayConfig) -> dict[str, s
         "NO_COLOR": "1",
     })
     return environment
+
+
+def _ensure_worktree_trust(isolated_codex_home: Path, worktree_cwd: Path) -> None:
+    """Trust the task worktree in the isolated codex home.
+
+    Writes a per-directory trust entry so codex does not treat the worktree
+    (which LightWorker itself created under LIGHTWORKER_HOME) as an untrusted
+    project; untrusted projects deny network commands in exec mode. Failures
+    are non-fatal: the task will surface the sandbox denial instead.
+    """
+    config_path = isolated_codex_home / "config.toml"
+    header = f"[projects.'{str(worktree_cwd).lower()}']\ntrust_level = \"trusted\"\n"
+    try:
+        existing = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+        if str(worktree_cwd).lower() not in existing.lower():
+            config_path.write_text(existing + ("\n" if existing and not existing.endswith("\n") else "") + header, encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _ensure_local_loopback_no_proxy(
@@ -615,7 +641,7 @@ class CodexWorker:
         args.append("-")
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         try:
-            environment = build_worker_environment(self.cfg, gateway)
+            environment = build_worker_environment(self.cfg, gateway, Path(cwd))
         except ValueError as exc:
             return RunResult(status="blocked", error=str(exc))
         kwargs: dict[str, Any] = {
