@@ -63,4 +63,5 @@
 - 目录中可见但协议不兼容的 WorkBuddy 模型会在提交时失败关闭。
 - 模型目录更新后，旧的未执行任务失败关闭并要求按新 revision 重建。
 - 审批后任务范围发生变化时拒绝执行。
+- 新增 `lightworker release` 确定性发布管线：按发布 SOP 逐步执行 PR 合并 → 版本归一 → 推送等 CI → 构建 + SHA256SUMS → tag 等 CI → GitHub Release，逐步输出状态、首次失败即停。发布流程本质是确定性操作，原生管线比沙箱内 LLM 更可靠（Windows 上 codex 沙箱会拒绝网络命令，已由多轮二分实验确认）。
 - 新增 `[runner] codex_sandbox_network_access` 配置（默认关闭）：开启后 Worker 沙箱在保留 workspace-write 文件限制的同时放行出站网络，使 gh / git push 类发布任务成为可能。开启该开关时 Worker 不再使用 `--ephemeral`（ephemeral 会话会丢弃 `-c` 沙箱覆盖，导致网络仍被拦截），隔离性由 `CODEX_HOME` 继续保证。

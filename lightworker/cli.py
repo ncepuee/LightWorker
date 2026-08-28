@@ -127,6 +127,11 @@ def build_parser() -> argparse.ArgumentParser:
     web.add_argument("--no-open", action="store_true", help="Do not open the browser automatically")
     sub.add_parser("mcp", help="Run the stdio MCP server and background scheduler")
     sub.add_parser("mcp-config", help="Print Codex config.toml snippet for this MCP server")
+    release = sub.add_parser("release", help="Run the deterministic release SOP for this repository")
+    release.add_argument("version", help="Version to release, e.g. 0.5.1 (v prefix optional)")
+    release.add_argument("--pr", type=int, help="Squash-merge this PR first (must be OPEN and mergeable)")
+    release.add_argument("--notes-file", help="Markdown file used as the GitHub Release body")
+    release.add_argument("--workspace", default=".", help="Repository path (defaults to current directory)")
     return parser
 
 
@@ -170,6 +175,15 @@ def main(argv: list[str] | None = None) -> int:
         path = write_default_config(cfg, overwrite=args.force)
         _json({"home": str(cfg.home), "config": str(path), "database": str(cfg.db_path)})
         return 0
+    if args.command == "release":
+        from .release import run_release
+
+        return run_release(
+            args.version,
+            args.pr,
+            Path(args.notes_file).expanduser() if args.notes_file else None,
+            Path(args.workspace).expanduser().resolve(),
+        )
     if args.command == "mcp-config":
         package_root = Path(__file__).resolve().parent.parent
         snippet = (
