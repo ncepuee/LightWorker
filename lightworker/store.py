@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import hashlib
@@ -154,7 +153,7 @@ class TaskStore:
             """
             UPDATE usage_samples SET cohort_class='indeterminate'
             WHERE cache_cohort NOT LIKE 'cache_cohort.v2:%'
-               OR prompt_protocol!='lightworker.prompt.v4'
+               OR prompt_protocol NOT IN ('lightworker.prompt.v4','lightworker.prompt.v5')
                OR prompt_protocol IS NULL
                OR route_verification='mismatch'
             """
@@ -333,7 +332,7 @@ class TaskStore:
             values[name] is not None
             for name in ("cache_cohort", "cache_cohort_sha256", "gateway", "model")
         ) and str(values["cache_cohort"]).startswith("cache_cohort.v2:") \
-          and values["prompt_protocol"] == "lightworker.prompt.v4"
+          and values["prompt_protocol"] in {"lightworker.prompt.v4", "lightworker.prompt.v5"}
         cohort_class = "indeterminate"
         if strict and values["route_verification"] != "mismatch":
             warm_cutoff = datetime.fromisoformat(created_at).timestamp() - warm_window
@@ -676,6 +675,33 @@ class TaskStore:
             "SELECT depends_on FROM dependencies WHERE task_id=? ORDER BY depends_on", (task_id,)
         ).fetchall()
         return [str(row[0]) for row in rows]
+
+    def purge_terminal_tasks(self, statuses: set[str] | None = None) -> int:
+        """Delete terminal (finished) tasks and their dependent rows.
+
+        Only tasks in a terminal state are removed; active or pending work is
+        never touched.  Events, usage samples, dependencies and orphaned root
+        budgets are cleaned up via cascading deletes / explicit statements.
+        Returns the number of deleted tasks.
+        """
+        targets = tuple(sorted(statuses or TERMINAL_STATUSES))
+        placeholders = ",".join("?" for _ in targets)
+        with self.transaction(immediate=True) as conn:
+            rows = conn.execute(
+                f"SELECT id FROM tasks WHERE status IN ({placeholders})", targets
+            ).fetchall()
+            ids = [str(row[0]) for row in rows]
+            if not ids:
+                return 0
+            id_placeholders = ",".join("?" for _ in ids)
+            conn.execute(f"DELETE FROM tasks WHERE id IN ({id_placeholders})", ids)
+            conn.execute(
+                """
+                DELETE FROM root_budgets
+                WHERE root_id NOT IN (SELECT DISTINCT root_id FROM tasks WHERE root_id IS NOT NULL)
+                """
+            )
+        return len(ids)
 
     def ready_tasks(self, limit: int) -> list[dict[str, Any]]:
         rows = self._connection().execute(

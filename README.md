@@ -27,7 +27,7 @@
 
 LightWorker is a lightweight, local-first multi-agent task runner with no third-party Python runtime dependencies. It lets Codex submit tasks through MCP, persists the task DAG in SQLite, executes Workers with `codex exec --json`, and uses an isolated Git worktree for write tasks.
 
-> **Project status:** `v0.2.0` is the current release. It adds profile-based dual-gateway delegation and a measurable DeepSeek Cache Lab. By default, LightWorker listens only on the local loopback address and does not automatically commit, merge, push, or publish; write tasks require approval and run in an isolated Git worktree.
+> **Project status:** `v0.4.0` is the current release. Since v0.2.0 it adds capability-aware gateway routing, `lightworker_worker` / `native_subagent` execution channels, approvals bound to immutable task scopes, an explicit worker environment allowlist, Prompt Protocol v5 cache cohorts, one-click terminal-task history purge, and an `image` task skeleton for upcoming image-generation routing. By default, LightWorker listens only on the local loopback address and does not automatically commit, merge, push, or publish; write tasks require approval and run in an isolated Git worktree. See [README_CN.md](README_CN.md) for the full Chinese documentation.
 
 ## Core Capabilities
 
@@ -38,8 +38,11 @@ LightWorker is a lightweight, local-first multi-agent task runner with no third-
 | Reasoning-aware routing | Mechanical tasks go to DeepSeek V4 Flash by default; complex tasks use `gpt-5.6-sol` |
 | Approval and isolation | `auto_readonly` runs read-only tasks automatically; write tasks wait for approval and enter an isolated Git worktree |
 | Three control surfaces | CLI, Codex MCP, and the local Web Console share the same scheduler and state store |
-| Measurable cache optimization | Prompt Protocol v4, strict Cache Cohort v2 isolation, explicit Context Packs, cache-affinity scheduling, and verified warm-cache metrics |
+| Measurable cache optimization | Prompt Protocol v5, strict Cache Cohort v2 isolation, explicit Context Packs, cache-affinity scheduling, and verified warm-cache metrics |
 | Dual-gateway profiles | Named Planner, fast, deep, and review profiles can route through OpenCodex or CLIProxyAPI with explicit fallback and route audits |
+| Capability-aware routing | Tasks declare required capabilities (e.g. `web_search`); gateways that lack them are excluded up front and fail closed instead of silently degrading |
+| Scope-bound approvals | Each approval binds `approval_id` plus a SHA-256 scope digest; a task spec that changes after approval is refused |
+| History management | The Web Console can purge terminated tasks with their events and usage records in one click |
 | Local-first security | `danger-full-access` is prohibited; user MCP servers are isolated by default; no automatic commit, merge, push, or publish |
 
 ## Secure Defaults

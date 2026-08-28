@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -16,6 +15,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import __version__
 from .config import Config
 from .policy import PolicyError
+from .rewrite_proxy import pick_free_port, start_rewrite_proxy
 from .scheduler import Scheduler
 from .service import LightWorkerService
 from .store import TaskStore
@@ -119,7 +119,10 @@ def _handler_factory(service: LightWorkerService, token: str, static_root: Path)
             path = parsed.path
             try:
                 if path == "/api/health":
-                    self._json(HTTPStatus.OK, {"status": "ok", "service": "lightworker"})
+                    self._json(
+                        HTTPStatus.OK,
+                        {"status": "ok", "service": "lightworker", "version": __version__},
+                    )
                     return
                 if path == "/api/doctor":
                     self._json(HTTPStatus.OK, service.doctor())
@@ -151,7 +154,9 @@ def _handler_factory(service: LightWorkerService, token: str, static_root: Path)
                         return
                 if path in {"/", "/index.html"}:
                     html = (static_root / "index.html").read_text(encoding="utf-8")
-                    html = html.replace("__LIGHTWORKER_TOKEN__", token)
+                    html = html.replace("__LIGHTWORKER_TOKEN__", token).replace(
+                        "__LIGHTWORKER_VERSION__", __version__
+                    )
                     self._send_bytes(HTTPStatus.OK, html.encode("utf-8"), "text/html; charset=utf-8")
                     return
                 static = {
@@ -185,10 +190,19 @@ def _handler_factory(service: LightWorkerService, token: str, static_root: Path)
                 if path == "/api/tasks":
                     self._json(HTTPStatus.ACCEPTED, service.delegate_task(self._read_json()))
                     return
+                if path == "/api/tasks/purge":
+                    body = self._read_json()
+                    self._json(HTTPStatus.OK, service.purge_history(
+                        include_cancelled=bool(body.get("include_cancelled", True))
+                    ))
+                    return
                 if path.startswith("/api/tasks/"):
                     parts = [unquote(part) for part in path.split("/") if part]
                     if len(parts) == 4 and parts[3] == "approve":
-                        self._json(HTTPStatus.OK, service.approve(parts[2]))
+                        body = self._read_json()
+                        self._json(HTTPStatus.OK, service.approve(
+                            parts[2], body.get("approval_id"), body.get("scope_digest")
+                        ))
                         return
                     if len(parts) == 4 and parts[3] == "cancel":
                         self._json(HTTPStatus.OK, service.cancel(parts[2]))
@@ -232,12 +246,34 @@ def create_http_server(
 def run_web(cfg: Config, host: str = "127.0.0.1", port: int = 8766, open_browser: bool = True) -> None:
     if host not in {"127.0.0.1", "::1"}:
         raise ValueError("LightWorker Web only binds to a loopback address")
+    rewrite_proxy = None
+    for name, gateway in cfg.gateways.items():
+        if gateway.enabled and gateway.base_url and not gateway.supports_output_schema:
+            try:
+                # The proxy forwards the full request path (e.g. /v1/responses),
+                # so the upstream root must not include a trailing /v1 segment.
+                upstream = gateway.base_url.rstrip("/")
+                if upstream.endswith("/v1"):
+                    upstream = upstream[:-3]
+                api_key = None
+                if gateway.api_key_env:
+                    api_key = __import__("os").environ.get(gateway.api_key_env)
+                proxy_port = pick_free_port(8319)
+                proxy_server, _ = start_rewrite_proxy(upstream, api_key, port=proxy_port)
+                rewrite_proxy = proxy_server
+                cfg.set_gateway_base_url(name, f"http://127.0.0.1:{proxy_port}/v1")
+                print(
+                    f"Rewrite proxy for gateway {name}: {upstream} -> http://127.0.0.1:{proxy_port}/v1",
+                    flush=True,
+                )
+            except OSError as exc:
+                print(f"Warning: failed to start rewrite proxy for gateway {name}: {exc}", flush=True)
     store = TaskStore(cfg.db_path)
     scheduler = Scheduler(cfg, store)
     service = LightWorkerService(cfg, store, scheduler)
     scheduler.start_background(reconcile=True, allow_passive=True)
     token = secrets.token_urlsafe(32)
-    static_root = cfg.web_dir
+    static_root = cfg.package_root / "web"
     server = create_http_server(host, port, service, token, static_root)
     display_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
     url = f"http://{display_host}:{server.server_address[1]}/"
@@ -251,4 +287,7 @@ def run_web(cfg: Config, host: str = "127.0.0.1", port: int = 8766, open_browser
         pass
     finally:
         server.server_close()
+        if rewrite_proxy is not None:
+            rewrite_proxy.shutdown()
+            rewrite_proxy.server_close()
         scheduler.stop(wait=True)

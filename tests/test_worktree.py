@@ -1,9 +1,10 @@
-
 import subprocess
 from pathlib import Path
 
 from lightworker.config import Config
-from lightworker.worktree import create_worktree
+import pytest
+
+from lightworker.worktree import WorktreeError, create_worktree
 
 
 def git(repo: Path, *args: str) -> None:
@@ -55,3 +56,37 @@ def test_subdirectory_workspace_stays_scoped_in_worktree(tmp_path: Path) -> None
     assert isolated_workspace.relative_to(cfg.worktrees_dir) == Path("task-subdirectory", "packages", "app")
     assert (isolated_workspace / "app.txt").read_text(encoding="utf-8") == "app\n"
     assert not (isolated_workspace / "root.txt").exists()
+
+
+def test_worktree_rejects_existing_local_branch_namespace(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init")
+    git(repo, "config", "user.email", "lightworker@example.invalid")
+    git(repo, "config", "user.name", "LightWorker Test")
+    (repo / "value.txt").write_text("main\n", encoding="utf-8")
+    git(repo, "add", "value.txt")
+    git(repo, "commit", "-m", "initial")
+    git(repo, "branch", "lightworker/task-collision")
+    cfg = Config(home=tmp_path / "state")
+    cfg.ensure_dirs()
+
+    with pytest.raises(WorktreeError, match="branch ref already exists"):
+        create_worktree(repo, "task-collision", cfg)
+
+
+def test_worktree_rejects_existing_origin_tracking_ref(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init")
+    git(repo, "config", "user.email", "lightworker@example.invalid")
+    git(repo, "config", "user.name", "LightWorker Test")
+    (repo / "value.txt").write_text("main\n", encoding="utf-8")
+    git(repo, "add", "value.txt")
+    git(repo, "commit", "-m", "initial")
+    git(repo, "update-ref", "refs/remotes/origin/lightworker/task-remote", "HEAD")
+    cfg = Config(home=tmp_path / "state")
+    cfg.ensure_dirs()
+
+    with pytest.raises(WorktreeError, match="remote tracking ref already exists"):
+        create_worktree(repo, "task-remote", cfg)

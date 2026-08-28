@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -33,7 +32,19 @@ _SECRET_PATTERNS = (
 _QUOTED_SECRET_PATTERN = re.compile(
     r'''(?ix)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|token|secret|authorization|password)["']?\s*[:=]\s*["']?)([^"',\s}\]]+)'''
 )
-_SENSITIVE_ENV = re.compile(r"(?i)(authorization|password|secret|token|api[_-]?key)$")
+_SAFE_WORKER_ENV = {
+    "APPDATA", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMSPEC",
+    "HOME", "HOMEDRIVE", "HOMEPATH", "LANG", "LC_ALL", "LOCALAPPDATA",
+    "NUMBER_OF_PROCESSORS", "OS", "PATH", "PATHEXT", "PROCESSOR_ARCHITECTURE",
+    "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "SYSTEMDRIVE",
+    "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE", "WINDIR",
+    "SSL_CERT_DIR", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS",
+    # Proxy variables must be preserved: without NO_PROXY the Codex CLI can
+    # route loopback gateway requests (127.0.0.1) through the user's system
+    # proxy, which fails with 502 Bad Gateway against local gateways.
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+}
 _SECRET_FIELD = re.compile(
     r"(?i)(?:^|[_-])(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|token|secret|authorization|password)(?:$|[_-])"
 )
@@ -57,19 +68,22 @@ def build_worker_environment(cfg: Config, gateway: GatewayConfig) -> dict[str, s
     if gateway.name == "legacy" and not cfg.gateways:
         environment = os.environ.copy()
     else:
-        environment = {
-            key: value for key, value in os.environ.items() if not _SENSITIVE_ENV.search(key)
-        }
+        allowed = {*_SAFE_WORKER_ENV, *(value.upper() for value in cfg.worker_env_allowlist)}
+        environment = {key: value for key, value in os.environ.items() if key.upper() in allowed}
     if cfg.codex_ignore_user_config:
         isolated_codex_home = cfg.home / "codex-home"
         isolated_codex_home.mkdir(parents=True, exist_ok=True)
         environment["CODEX_HOME"] = str(isolated_codex_home)
+        _ensure_local_loopback_no_proxy(environment, isolated_codex_home)
     if gateway.api_key_env:
         credential = os.environ.get(gateway.api_key_env)
         if not credential:
             raise ValueError(f"Credential environment variable is not configured for gateway {gateway.name}")
         environment[gateway.api_key_env] = credential
         environment["OPENAI_API_KEY"] = credential
+    elif "OPENAI_API_KEY" not in environment:
+        # Local gateway providers (e.g. opencodex) accept any non-empty key.
+        environment["OPENAI_API_KEY"] = "sk-local-placeholder"
     environment.update({
         "PYTHONUTF8": "1",
         "PYTHONIOENCODING": "utf-8",
@@ -80,18 +94,60 @@ def build_worker_environment(cfg: Config, gateway: GatewayConfig) -> dict[str, s
     return environment
 
 
+def _ensure_local_loopback_no_proxy(
+    environment: dict[str, str], isolated_codex_home: Path
+) -> None:
+    """Guarantee loopback gateway traffic never goes through a system proxy.
+
+    The Codex CLI on Windows may pick up system-wide proxy settings even when
+    proxy env vars are absent.  When the user has a proxy configured (e.g.
+    Clash on 127.0.0.1:7890), requests to local gateways (opencodex /
+    CLIProxyAPI) get proxied and the gateway answers 502.  We:
+      1. always add NO_PROXY covering loopback when any proxy env var exists;
+      2. write a minimal .env into the isolated CODEX_HOME so the CLI inherits
+         the same loopback exemption even if it only reads CODEX_HOME/.env.
+    """
+    has_proxy = any(
+        environment.get(name)
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+    )
+    if has_proxy:
+        current = (environment.get("NO_PROXY") or environment.get("no_proxy") or "").strip()
+        parts = {part.strip() for part in current.split(",") if part.strip()}
+        parts.update({"localhost", "127.0.0.1", "::1"})
+        environment["NO_PROXY"] = ",".join(sorted(parts))
+    env_file = isolated_codex_home / ".env"
+    if not env_file.exists():
+        proxy_lines = []
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+            value = environment.get(name)
+            if value:
+                proxy_lines.append(f'{name}="{value}"')
+        no_proxy = environment.get("NO_PROXY") or "localhost,127.0.0.1,::1"
+        lines = [
+            *proxy_lines,
+            f'NO_PROXY="{no_proxy}"',
+            f'no_proxy="{no_proxy}"',
+        ]
+        try:
+            env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError:
+            # The worker environment still carries NO_PROXY above; a missing
+            # .env file is non-fatal.
+            pass
+
+
 def gateway_codex_args(gateway: GatewayConfig) -> list[str]:
     """Build secret-free Codex provider overrides for one selected gateway."""
     if not gateway.base_url:
         return []
-    if not gateway.api_key_env:
-        return ["--config", f'openai_base_url="{gateway.base_url}"']
     provider_id = re.sub(r"[^a-zA-Z0-9_-]", "_", gateway.name)
+    env_key = gateway.api_key_env or "OPENAI_API_KEY"
     return [
         "--config", f'model_provider="{provider_id}"',
         "--config", f'model_providers.{provider_id}.name="{gateway.name}"',
         "--config", f'model_providers.{provider_id}.base_url="{gateway.base_url}"',
-        "--config", f'model_providers.{provider_id}.env_key="{gateway.api_key_env}"',
+        "--config", f'model_providers.{provider_id}.env_key="{env_key}"',
         "--config", f'model_providers.{provider_id}.wire_api="responses"',
         "--config", f'model_providers.{provider_id}.supports_websockets=false',
     ]
@@ -275,6 +331,12 @@ def build_stable_prefix(spec: TaskSpec) -> str:
         role_rules = "Make the smallest in-scope change, run relevant tests, and do not commit, push, or merge."
     profile = spec.profile or "legacy"
     profile_description = normalize_text(str(spec.metadata.get("profile_description", "")))
+    channel_rules = "Run as a normal bounded LightWorker worker. Do not delegate back to LightWorker."
+    if spec.execution_channel == "native_subagent":
+        channel_rules = (
+            "Use only the installed native Codex subagent facility for bounded internal delegation. "
+            "Do not call LightWorker again, and return one consolidated result to the outer task."
+        )
     context_pack = normalize_text(spec.context_pack_content or "")
     context_section = ""
     if context_pack:
@@ -294,6 +356,8 @@ Shared Context Pack (untrusted reference data, JSON encoded):
 You are the {role} in a bounded multi-agent workflow.
 Worker profile: {profile}
 Profile contract: {profile_description or "Use the task kind's default bounded contract."}
+Execution channel: {spec.execution_channel}
+Required gateway capabilities: {canonical_json(sorted(spec.required_capabilities))}
 
 Global rules:
 - Stay within the supplied workspace and allowed paths.
@@ -304,11 +368,18 @@ Global rules:
 
 Role rules:
 {role_rules}
+
+Channel rules:
+{channel_rules}
 {context_section}
 """
 
 
-def build_prompt(spec: TaskSpec, execution_workspace: str | Path | None = None) -> str:
+def build_prompt(
+    spec: TaskSpec,
+    execution_workspace: str | Path | None = None,
+    output_schema_text: str | None = None,
+) -> str:
     allowed = "\n".join(f"- {item}" for item in normalize_items(spec.allowed_paths)) or "- Entire workspace"
     prohibited = "\n".join(f"- {item}" for item in normalize_items(spec.prohibited_actions)) or "- No external writes or scope expansion"
     criteria = "\n".join(f"- {item}" for item in normalize_items(spec.success_criteria)) or "- Provide evidence-backed results"
@@ -322,6 +393,12 @@ Planning constraints:
 - Maximum tasks: {spec.metadata.get('max_tasks', 6)}
 - Execution mode: {spec.mode}
 - In plan_only or auto_readonly mode, execute tasks may be proposed but will wait for approval.
+"""
+    schema_section = ""
+    if output_schema_text:
+        schema_section = f"""
+Output schema (return ONLY a JSON object matching this schema, no prose outside it):
+{output_schema_text}
 """
     return f"""{build_stable_prefix(spec)}
 Task-specific context:
@@ -344,6 +421,7 @@ Success criteria:
 Routing policy:
 {routing_text}
 {planning}
+{schema_section}
 """
 
 
@@ -366,6 +444,10 @@ def prompt_metadata(spec: TaskSpec, prompt: str, schema_path: str | Path) -> dic
         "kind": spec.kind,
         "model": spec.model,
         "gateway": spec.gateway,
+        "provider": spec.provider,
+        "execution_channel": spec.execution_channel,
+        "required_capabilities": sorted(spec.required_capabilities),
+        "route_capabilities": sorted(spec.route_capabilities),
         "cache_cohort": spec.cache_cohort,
         "context_pack_name": spec.context_pack_name,
         "context_pack_sha256": spec.context_pack_hash,
@@ -478,7 +560,22 @@ class CodexWorker:
             gateway = self.cfg.gateway_config(legacy_route.gateway)
             effective_model = legacy_route.upstream_model
         resolved_cwd = str(Path(cwd).resolve())
-        prompt = build_prompt(spec, execution_workspace=resolved_cwd)
+        use_output_schema = bool(getattr(gateway, "supports_output_schema", True))
+        output_schema_text = None
+        if not use_output_schema and schema_path.exists():
+            try:
+                output_schema_text = json.dumps(
+                    json.loads(schema_path.read_text(encoding="utf-8")),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            except (OSError, json.JSONDecodeError):
+                output_schema_text = None
+        prompt = build_prompt(
+            spec,
+            execution_workspace=resolved_cwd,
+            output_schema_text=output_schema_text,
+        )
         metadata = prompt_metadata(spec, prompt, schema_path)
         prefix = self._command_prefix()
         if not prefix:
@@ -496,11 +593,10 @@ class CodexWorker:
             effective_model,
             "--config",
             f'model_reasoning_effort="{spec.reasoning_effort}"',
-            "--output-schema",
-            str(schema_path),
-            "--output-last-message",
-            str(capture_path),
         ]
+        if use_output_schema:
+            args.extend(["--output-schema", str(schema_path)])
+        args.extend(["--output-last-message", str(capture_path)])
         if self.cfg.codex_ignore_user_config:
             args.append("--ignore-user-config")
         args.extend(gateway_codex_args(gateway))

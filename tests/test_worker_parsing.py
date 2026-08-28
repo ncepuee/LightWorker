@@ -1,4 +1,3 @@
-
 from lightworker.models import TaskSpec
 from lightworker.config import Config, GatewayConfig
 from lightworker.worker import build_prompt, build_worker_environment, extract_observed_model, extract_usage, gateway_codex_args, is_generic_result, normalize_worker_result, parse_json_candidate, prompt_metadata, redact_text, redact_value
@@ -134,10 +133,27 @@ def test_legacy_environment_preserves_existing_openai_api_key(tmp_path, monkeypa
 
 def test_registered_gateway_environment_filters_unselected_credentials(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("UNRELATED_ACCESS_TOKEN", "synthetic-unrelated")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "synthetic-aws-secret")
+    monkeypatch.setenv("ARBITRARY_NON_SECRET_NAME", "synthetic-unreviewed")
     cfg = Config(home=tmp_path, default_gateway="opencodex")
     gateway = GatewayConfig("opencodex", "http://127.0.0.1:10100/v1")
     cfg.gateways["opencodex"] = gateway
-    assert "UNRELATED_ACCESS_TOKEN" not in build_worker_environment(cfg, gateway)
+    environment = build_worker_environment(cfg, gateway)
+    assert "UNRELATED_ACCESS_TOKEN" not in environment
+    assert "AWS_SECRET_ACCESS_KEY" not in environment
+    assert "ARBITRARY_NON_SECRET_NAME" not in environment
+
+
+def test_registered_gateway_only_passes_explicit_extra_environment(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("WORKBUDDY_BRIDGE_MODE", "local")
+    cfg = Config(
+        home=tmp_path,
+        default_gateway="opencodex",
+        worker_env_allowlist=("WORKBUDDY_BRIDGE_MODE",),
+    )
+    gateway = GatewayConfig("opencodex", "http://127.0.0.1:10100/v1")
+    cfg.gateways["opencodex"] = gateway
+    assert build_worker_environment(cfg, gateway)["WORKBUDDY_BRIDGE_MODE"] == "local"
 
 
 def test_authenticated_gateway_uses_custom_codex_provider_without_secret_in_args(tmp_path, monkeypatch) -> None:

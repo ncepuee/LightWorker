@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -12,6 +11,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
+from .approval import stamp_approval, verify_approval
 from .cache import configure_task_cache
 from .config import Config, resolve_executable
 from .models import TaskSpec, public_task
@@ -49,6 +49,22 @@ class LightWorkerService:
             "model": spec.requested_model,
             "gateway": spec.requested_gateway,
             "reasoning_effort": spec.requested_reasoning_effort,
+            "execution_channel": spec.execution_channel,
+            "required_capabilities": spec.required_capabilities,
+        })
+
+    def _record_acceptance(self, task_id: str, spec: TaskSpec, status: str) -> None:
+        if status == "awaiting_approval":
+            self.store.add_event(task_id, "approval.requested", {
+                "approval_id": spec.approval_id,
+                "scope_digest": spec.approval_scope_digest,
+                "scope_version": spec.approval_scope.get("version"),
+            })
+            return
+        self.store.add_event(task_id, "worker.dispatch.accepted", {
+            "status": status,
+            "execution_channel": spec.execution_channel,
+            "gateway": spec.gateway,
         })
         self.store.add_event(task_id, "worker.route_resolved", {
             "profile": spec.profile,
@@ -57,6 +73,12 @@ class LightWorkerService:
             "upstream_model": spec.upstream_model,
             "reasoning_effort": spec.reasoning_effort,
             "response_mode": spec.response_mode,
+            "provider": spec.provider,
+            "billing_class": spec.billing_class,
+            "execution_channel": spec.execution_channel,
+            "required_capabilities": spec.required_capabilities,
+            "route_capabilities": spec.route_capabilities,
+            "catalog_revision": spec.catalog_revision,
             "verification": "configured",
             "cache_cohort": spec.cache_cohort,
             "context_pack_hash": spec.context_pack_hash,
@@ -145,6 +167,10 @@ class LightWorkerService:
             upstream_model=route.upstream_model,
             response_mode=route.response_mode,
             fallback_gateway=route.fallback_gateway,
+            provider=route.provider,
+            billing_class=route.billing_class,
+            route_capabilities=list(route.capabilities),
+            catalog_revision=route.catalog_revision,
             cache_cohort=route.cache_cohort,
             reasoning_effort=selected.reasoning_effort,
             sandbox="read-only",
@@ -162,6 +188,7 @@ class LightWorkerService:
         validate_task(spec, self.cfg)
         task_id = self.store.create_task(spec, root_budget=self._root_budget_limits(budget))
         self._record_route(task_id, spec)
+        self._record_acceptance(task_id, spec, "queued")
         return {"root_task_id": task_id, "status": "queued", "mode": mode, "profile": spec.profile}
 
     def delegate_task(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -172,6 +199,13 @@ class LightWorkerService:
         profile = str(data["profile"]) if data.get("profile") else None
         requested_effort = str(data["reasoning_effort"]) if data.get("reasoning_effort") else None
         requested_gateway = str(data["gateway"]) if data.get("gateway") else None
+        execution_channel = str(data.get("execution_channel", "lightworker_worker"))
+        raw_capabilities = data.get("required_capabilities", [])
+        if not isinstance(raw_capabilities, list):
+            raise PolicyError("required_capabilities must be an array")
+        required_capabilities = [str(value) for value in raw_capabilities]
+        if execution_channel == "native_subagent" and "native_subagents" not in required_capabilities:
+            required_capabilities.append("native_subagents")
         selected = self.cfg.resolve_profile(
             profile,
             kind=kind,
@@ -180,7 +214,15 @@ class LightWorkerService:
             reasoning_effort=requested_effort,
         )
         reasoning_effort = selected.reasoning_effort
-        route = self.cfg.resolve_route(reasoning_effort, selected.model, selected.gateway)
+        try:
+            route = self.cfg.resolve_route(
+                reasoning_effort,
+                selected.model,
+                selected.gateway,
+                required_capabilities=required_capabilities,
+            )
+        except ValueError as exc:
+            raise PolicyError(str(exc)) from exc
         parent_id = str(data["parent_id"]) if data.get("parent_id") else None
         root_id = self._validated_parent_root(
             parent_id, str(data["root_id"]) if data.get("root_id") else None
@@ -209,6 +251,12 @@ class LightWorkerService:
             upstream_model=route.upstream_model,
             response_mode=route.response_mode,
             fallback_gateway=route.fallback_gateway,
+            provider=route.provider,
+            billing_class=route.billing_class,
+            execution_channel=execution_channel,
+            required_capabilities=list(route.required_capabilities),
+            route_capabilities=list(route.capabilities),
+            catalog_revision=route.catalog_revision,
             cache_cohort=route.cache_cohort,
             reasoning_effort=reasoning_effort,
             sandbox="workspace-write" if kind == "execute" else "read-only",
@@ -228,11 +276,18 @@ class LightWorkerService:
         status = "queued"
         if mode == "plan_only" or (mode == "auto_readonly" and kind == "execute"):
             status = "awaiting_approval"
+            stamp_approval(spec)
         task_id = self.store.create_task(
             spec, status=status, root_budget=self._root_budget_limits(data.get("budget"))
         )
         self._record_route(task_id, spec)
-        return {"task_id": task_id, "status": status, "profile": spec.profile}
+        self._record_acceptance(task_id, spec, status)
+        return {
+            "task_id": task_id,
+            "status": status,
+            "profile": spec.profile,
+            "execution_channel": spec.execution_channel,
+        }
 
     def delegate_batch(self, tasks: list[dict[str, Any]]) -> dict[str, Any]:
         if not tasks:
@@ -272,7 +327,19 @@ class LightWorkerService:
                     reasoning_effort=requested_effort,
                 )
                 reasoning_effort = selected.reasoning_effort
-                route = self.cfg.resolve_route(reasoning_effort, selected.model, selected.gateway)
+                execution_channel = str(payload.get("execution_channel", "lightworker_worker"))
+                raw_capabilities = payload.get("required_capabilities", [])
+                if not isinstance(raw_capabilities, list):
+                    raise PolicyError("required_capabilities must be an array")
+                required_capabilities = [str(value) for value in raw_capabilities]
+                if execution_channel == "native_subagent" and "native_subagents" not in required_capabilities:
+                    required_capabilities.append("native_subagents")
+                route = self.cfg.resolve_route(
+                    reasoning_effort,
+                    selected.model,
+                    selected.gateway,
+                    required_capabilities=required_capabilities,
+                )
                 spec = TaskSpec(
                     task_id=generated[name], root_id=root_id, parent_id=None,
                     name=name, kind=kind, objective=str(payload["objective"]), workspace=str(payload["workspace"]),
@@ -281,6 +348,11 @@ class LightWorkerService:
                     requested_gateway=requested_gateway, requested_reasoning_effort=requested_effort,
                     gateway=route.gateway, upstream_model=route.upstream_model,
                     response_mode=route.response_mode, fallback_gateway=route.fallback_gateway,
+                    provider=route.provider, billing_class=route.billing_class,
+                    execution_channel=execution_channel,
+                    required_capabilities=list(route.required_capabilities),
+                    route_capabilities=list(route.capabilities),
+                    catalog_revision=route.catalog_revision,
                     cache_cohort=route.cache_cohort,
                     reasoning_effort=reasoning_effort,
                     sandbox="workspace-write" if kind == "execute" else "read-only",
@@ -301,12 +373,14 @@ class LightWorkerService:
             status = "queued"
             if spec.mode == "plan_only" or (spec.mode == "auto_readonly" and spec.kind == "execute"):
                 status = "awaiting_approval"
+                stamp_approval(spec)
             entries.append((spec, status, 0))
         limits = self._root_budget_limits(ordered[0].get("budget"))
         task_ids = self.store.create_tasks(entries, root_budgets={root_id: limits})
         results: list[dict[str, Any]] = []
         for task_id, (spec, status, _) in zip(task_ids, entries, strict=True):
             self._record_route(task_id, spec)
+            self._record_acceptance(task_id, spec, status)
             results.append({"task_id": task_id, "name": spec.name, "status": status, "profile": spec.profile})
         return {"root_id": root_id, "tasks": results}
 
@@ -341,6 +415,12 @@ class LightWorkerService:
                 "gateway": result.get("gateway"),
                 "reasoning_effort": result.get("reasoning_effort"),
                 "response_mode": result.get("response_mode"),
+                "provider": result.get("provider"),
+                "billing_class": result.get("billing_class"),
+                "execution_channel": result.get("execution_channel"),
+                "required_capabilities": result.get("required_capabilities"),
+                "route_capabilities": result.get("route_capabilities"),
+                "catalog_revision": result.get("catalog_revision"),
             },
             "observed": observed,
             "verification": verification,
@@ -441,15 +521,49 @@ class LightWorkerService:
         }
         return metrics
 
-    def approve(self, task_id: str) -> dict[str, Any]:
+    def approve(
+        self,
+        task_id: str,
+        approval_id: str | None = None,
+        scope_digest: str | None = None,
+    ) -> dict[str, Any]:
+        row = self.store.get_task(task_id)
+        if not row or row["status"] != "awaiting_approval":
+            raise PolicyError("Task is not awaiting approval")
+        spec = self.store.get_spec(task_id)
+        try:
+            verify_approval(spec, approval_id, scope_digest)
+        except ValueError as exc:
+            raise PolicyError(str(exc)) from exc
         if not self.store.approve(task_id):
             raise PolicyError("Task is not awaiting approval")
-        return {"task_id": task_id, "status": "queued"}
+        self.store.add_event(task_id, "approval.granted", {
+            "approval_id": spec.approval_id,
+            "scope_digest": spec.approval_scope_digest,
+            "actor": "local_user",
+        })
+        self.store.add_event(task_id, "worker.dispatch.accepted", {
+            "status": "queued",
+            "execution_channel": spec.execution_channel,
+            "gateway": spec.gateway,
+        })
+        return {"task_id": task_id, "status": "queued", "approval_id": spec.approval_id}
 
     def cancel(self, task_id: str) -> dict[str, Any]:
         if not self.scheduler.cancel(task_id):
             raise PolicyError("Task is already terminal or does not exist")
         return {"task_id": task_id, "status": "cancelled"}
+
+    def purge_history(self, include_cancelled: bool = True) -> dict[str, Any]:
+        """Delete terminal tasks from the local database.
+
+        Active work (queued/starting/running/awaiting_approval) is preserved.
+        """
+        statuses = {"completed", "failed", "blocked", "orphaned"}
+        if include_cancelled:
+            statuses.add("cancelled")
+        deleted = self.store.purge_terminal_tasks(statuses)
+        return {"deleted": deleted, "statuses": sorted(statuses)}
 
     def retry_fallback(self, task_id: str) -> dict[str, Any]:
         row = self.store.get_task(task_id)
@@ -463,7 +577,10 @@ class LightWorkerService:
         if not original.fallback_gateway:
             raise PolicyError("No configured fallback gateway is available")
         route = self.cfg.resolve_route(
-            original.reasoning_effort, original.model, original.fallback_gateway
+            original.reasoning_effort,
+            original.model,
+            original.fallback_gateway,
+            required_capabilities=original.required_capabilities,
         )
         root_id = original.root_id or task_id
         if not self.store.reserve_budget(root_id, "retry"):
@@ -477,6 +594,10 @@ class LightWorkerService:
         clone.upstream_model = route.upstream_model
         clone.response_mode = route.response_mode
         clone.fallback_gateway = route.fallback_gateway
+        clone.provider = route.provider
+        clone.billing_class = route.billing_class
+        clone.route_capabilities = list(route.capabilities)
+        clone.catalog_revision = route.catalog_revision
         clone.cache_cohort = route.cache_cohort
         clone.dependencies = []
         clone.metadata = {**clone.metadata, "retry_of": task_id}
@@ -501,7 +622,12 @@ class LightWorkerService:
             raise PolicyError("Escalation requires a failed, blocked, or schema-invalid task")
         selected_profile = profile or "deep_worker"
         selected = self.cfg.resolve_profile(selected_profile, kind=original.kind)
-        route = self.cfg.resolve_route(selected.reasoning_effort, selected.model, selected.gateway)
+        route = self.cfg.resolve_route(
+            selected.reasoning_effort,
+            selected.model,
+            selected.gateway,
+            required_capabilities=original.required_capabilities,
+        )
         root_id = original.root_id or task_id
         if not self.store.reserve_budget(root_id, "escalation"):
             raise PolicyError("Root task escalation budget exhausted")
@@ -518,6 +644,10 @@ class LightWorkerService:
         clone.upstream_model = route.upstream_model
         clone.response_mode = route.response_mode
         clone.fallback_gateway = route.fallback_gateway
+        clone.provider = route.provider
+        clone.billing_class = route.billing_class
+        clone.route_capabilities = list(route.capabilities)
+        clone.catalog_revision = route.catalog_revision
         clone.cache_cohort = route.cache_cohort
         clone.reasoning_effort = selected.reasoning_effort
         clone.dependencies = []
@@ -598,8 +728,30 @@ class LightWorkerService:
                 "tcp_reachable": tcp_reachable,
                 "api_reachable": api_reachable,
                 "response_mode": gateway.response_mode,
+                "capabilities": list(self.cfg.gateway_capabilities(name)),
+                "catalog": self.cfg.catalog_snapshot(name),
                 "credential_configured": not gateway.api_key_env or bool(os.environ.get(gateway.api_key_env)),
                 "default": name == self.cfg.default_gateway or (not self.cfg.gateways and name == "legacy"),
+            })
+        model_routes = []
+        for model, route in sorted(self.cfg.model_routes.items()):
+            candidates = (route.primary, *route.fallback)
+            compatible = [
+                name for name in candidates
+                if name in configured
+                and configured[name].enabled
+                and set(route.required_capabilities).issubset(self.cfg.gateway_capabilities(name))
+            ]
+            model_routes.append({
+                "model": model,
+                "primary": route.primary,
+                "fallback": list(route.fallback),
+                "provider": route.provider or (model.split("/", 1)[0] if "/" in model else route.primary),
+                "billing_class": route.billing_class,
+                "upstream_models": dict(route.upstream_models),
+                "required_capabilities": list(route.required_capabilities),
+                "compatible_gateways": compatible,
+                "routable": bool(compatible),
             })
         return {
             "home": str(self.cfg.home),
@@ -622,6 +774,7 @@ class LightWorkerService:
                 }
                 for profile in self.cfg.worker_profiles.values()
             ],
+            "model_routes": model_routes,
             "max_concurrency": self.cfg.max_concurrency,
             "root_budget_defaults": {
                 "max_concurrency": self.cfg.root_max_concurrency,

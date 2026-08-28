@@ -1,12 +1,11 @@
-
 from __future__ import annotations
 
 import re
 from pathlib import Path
 from typing import Any
 
-from .config import Config
-from .models import KNOWN_KINDS, READ_ONLY_KINDS, TaskSpec
+from .config import Config, normalize_capabilities
+from .models import KNOWN_EXECUTION_CHANNELS, KNOWN_KINDS, READ_ONLY_KINDS, TaskSpec
 
 
 class PolicyError(ValueError):
@@ -22,6 +21,22 @@ def validate_task(spec: TaskSpec, cfg: Config) -> TaskSpec:
         raise PolicyError("Task objective cannot be empty")
     if spec.kind not in KNOWN_KINDS:
         raise PolicyError(f"Unsupported task kind: {spec.kind}")
+    if spec.execution_channel not in KNOWN_EXECUTION_CHANNELS:
+        raise PolicyError(f"Unsupported execution channel: {spec.execution_channel}")
+    if spec.kind == "plan" and spec.execution_channel != "lightworker_worker":
+        raise PolicyError("Plan tasks must use the lightworker_worker execution channel")
+    if spec.kind == "image" and spec.execution_channel != "lightworker_worker":
+        raise PolicyError("Image tasks must use the lightworker_worker execution channel")
+    try:
+        spec.required_capabilities = list(normalize_capabilities(spec.required_capabilities))
+        spec.route_capabilities = list(normalize_capabilities(spec.route_capabilities))
+    except ValueError as exc:
+        raise PolicyError(str(exc)) from exc
+    if spec.execution_channel == "native_subagent" and "native_subagents" not in spec.required_capabilities:
+        raise PolicyError("native_subagent tasks must require the native_subagents capability")
+    missing_capabilities = sorted(set(spec.required_capabilities) - set(spec.route_capabilities))
+    if missing_capabilities:
+        raise PolicyError(f"Selected gateway is missing required capabilities: {missing_capabilities}")
     if spec.model not in cfg.allowed_models:
         raise PolicyError(f"Model is not in the allowlist: {spec.model}")
     if spec.gateway:
@@ -33,6 +48,12 @@ def validate_task(spec: TaskSpec, cfg: Config) -> TaskSpec:
             raise PolicyError("Task response_mode does not match the selected gateway")
         if not spec.upstream_model or not spec.cache_cohort:
             raise PolicyError("Task gateway route is incomplete")
+        if spec.catalog_revision:
+            current_revision = cfg.catalog_snapshot(spec.gateway).get("revision")
+            if current_revision != spec.catalog_revision:
+                raise PolicyError(
+                    "Model catalog changed after task creation; create a new task to review the new route snapshot"
+                )
     if spec.reasoning_effort not in {"low", "medium", "high", "xhigh", "max"}:
         raise PolicyError(f"Unsupported reasoning effort: {spec.reasoning_effort}")
     if spec.mode not in {"plan_only", "auto_readonly", "auto_execute"}:
