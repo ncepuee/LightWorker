@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lightworker"
-version = "0.5.0"
+version = "0.5.1"
 description = "A lightweight, local-first multi-agent task runner for Codex and OpenAI-compatible gateways."
 readme = "README.md"
 requires-python = ">=3.11"
