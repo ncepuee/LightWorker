@@ -465,6 +465,56 @@ class LightWorkerService:
             raise KeyError(task_id)
         return {"task_id": task_id, "events": self.store.events(task_id, after_id, limit)}
 
+    def claim_native_dispatches(
+        self, host_id: str, limit: int = 1, lease_seconds: int = 90
+    ) -> dict[str, Any]:
+        """Return durable tickets for this Codex session to spawn natively.
+
+        This endpoint is intentionally a pull bridge: LightWorker cannot invoke
+        the desktop session's spawn_agent tool itself.  The host owns the actual
+        agent thread and immediately acknowledges it through native_started.
+        """
+        self.store.requeue_expired_native_dispatches()
+        tickets = []
+        for row in self.store.claim_native_dispatches(host_id, limit, lease_seconds):
+            spec = self.store.get_spec(str(row["id"]))
+            tickets.append({
+                "task_id": str(row["id"]),
+                "lease_id": str(row["native_lease_id"]),
+                "lease_expires_at": row["native_lease_expires_at"],
+                "task_name": spec.name or f"lightworker_{str(row['id'])[-8:]}",
+                "objective": spec.objective,
+                "workspace": spec.workspace,
+                "kind": spec.kind,
+                "model": spec.model,
+                "reasoning_effort": spec.reasoning_effort,
+                "sandbox": spec.sandbox,
+                "allowed_paths": spec.allowed_paths,
+                "prohibited_actions": spec.prohibited_actions,
+                "success_criteria": spec.success_criteria,
+                "result_contract": "Return a concise summary, files changed, verification performed, and blockers.",
+            })
+        return {"host_id": host_id, "tickets": tickets}
+
+    def native_started(self, task_id: str, lease_id: str, thread_id: str) -> dict[str, Any]:
+        if not self.store.native_started(task_id, lease_id, thread_id):
+            raise PolicyError("Native dispatch lease is stale or task is not dispatching")
+        return {"task_id": task_id, "status": "running", "thread_id": thread_id}
+
+    def native_event(
+        self, task_id: str, lease_id: str, event_type: str, payload: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if not self.store.native_event(task_id, lease_id, event_type, payload):
+            raise PolicyError("Native dispatch lease is stale or task is not active")
+        return {"task_id": task_id, "accepted": True}
+
+    def native_completed(
+        self, task_id: str, lease_id: str, status: str, result: dict[str, Any] | None = None, error: str | None = None
+    ) -> dict[str, Any]:
+        if not self.store.native_complete(task_id, lease_id, status, result=result, error=error):
+            raise PolicyError("Native dispatch lease is stale or task is already terminal")
+        return {"task_id": task_id, "status": status}
+
     def cache_metrics(
         self,
         model: str | None = "deepseek/deepseek-v4-flash",
@@ -550,9 +600,18 @@ class LightWorkerService:
         return {"task_id": task_id, "status": "queued", "approval_id": spec.approval_id}
 
     def cancel(self, task_id: str) -> dict[str, Any]:
+        row = self.store.get_task(task_id)
         if not self.scheduler.cancel(task_id):
             raise PolicyError("Task is already terminal or does not exist")
-        return {"task_id": task_id, "status": "cancelled"}
+        native_thread_id = row.get("native_thread_id") if row else None
+        if native_thread_id:
+            self.store.add_event(task_id, "native.interrupt_requested", {"thread_id": native_thread_id})
+        return {
+            "task_id": task_id,
+            "status": "cancelled",
+            "native_interrupt_required": bool(native_thread_id),
+            "native_thread_id": native_thread_id,
+        }
 
     def purge_history(self, include_cancelled: bool = True) -> dict[str, Any]:
         """Delete terminal tasks from the local database.

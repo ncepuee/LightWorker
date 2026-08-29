@@ -129,6 +129,51 @@ TOOLS: list[dict[str, Any]] = [
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     },
     {
+        "name": "claim_native_dispatches",
+        "description": "Claim queued Codex-native tickets for this current host. For every ticket, call spawn_agent, then native_subagent_started. This is the real native bridge; it never runs codex exec as a fallback.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "host_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 12, "default": 3},
+                "lease_seconds": {"type": "integer", "minimum": 15, "maximum": 3600, "default": 90},
+            },
+            "required": ["host_id"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
+        "name": "native_subagent_started",
+        "description": "Acknowledge that the current Codex host spawned a native subagent for a claimed LightWorker ticket.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"task_id": {"type": "string"}, "lease_id": {"type": "string"}, "thread_id": {"type": "string", "minLength": 1, "maxLength": 256}},
+            "required": ["task_id", "lease_id", "thread_id"], "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
+        "name": "native_subagent_event",
+        "description": "Write a bounded native-thread progress event and refresh its dispatch lease while waiting with wait_threads.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"task_id": {"type": "string"}, "lease_id": {"type": "string"}, "event_type": {"type": "string", "pattern": "^native\\."}, "payload": {"type": "object"}},
+            "required": ["task_id", "lease_id", "event_type"], "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
+        "name": "native_subagent_completed",
+        "description": "Persist the terminal result returned by a native Codex subagent after wait_threads completes.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"task_id": {"type": "string"}, "lease_id": {"type": "string"}, "status": {"type": "string", "enum": ["completed", "failed", "cancelled", "blocked"]}, "result": {"type": "object"}, "error": {"type": "string"}},
+            "required": ["task_id", "lease_id", "status"], "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
         "name": "get_task_tree",
         "description": "List every task belonging to an orchestration root.",
         "inputSchema": {
@@ -258,6 +303,14 @@ class MCPServer:
             "orchestrate": lambda a: self.service.orchestrate(**a),
             "delegate_task": self.service.delegate_task,
             "delegate_batch": lambda a: self.service.delegate_batch(a["tasks"]),
+            "claim_native_dispatches": lambda a: self.service.claim_native_dispatches(
+                a["host_id"], int(a.get("limit", 3)), int(a.get("lease_seconds", 90))
+            ),
+            "native_subagent_started": lambda a: self.service.native_started(a["task_id"], a["lease_id"], a["thread_id"]),
+            "native_subagent_event": lambda a: self.service.native_event(a["task_id"], a["lease_id"], a["event_type"], a.get("payload")),
+            "native_subagent_completed": lambda a: self.service.native_completed(
+                a["task_id"], a["lease_id"], a["status"], a.get("result"), a.get("error")
+            ),
             "get_task": lambda a: self.service.task(a["task_id"]),
             "get_task_tree": lambda a: self.service.task_tree(a["root_id"]),
             "list_tasks": lambda a: self.service.list_tasks(a.get("status"), int(a.get("limit", 100))),
@@ -315,7 +368,10 @@ class MCPServer:
                     "instructions": (
                         "Use orchestrate for a complete goal and delegate_batch for an existing plan. "
                         "Default to auto_readonly. Do not approve execute tasks or expand workspace scope "
-                        "without the user's authorization. Max concurrency and model routing are enforced locally."
+                        "without the user's authorization. Max concurrency and model routing are enforced locally. "
+                        "For execution_channel=native_subagent, call claim_native_dispatches, use the current "
+                        "Codex host to spawn_agent for every ticket, acknowledge with native_subagent_started, "
+                        "wait for the native threads, and persist their terminal result with native_subagent_completed."
                     ),
                 },
             )

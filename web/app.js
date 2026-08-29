@@ -1,4 +1,4 @@
-/* LightWorker 0.5.0 — Mission Control console */
+/* LightWorker 0.6.0 — Mission Control console */
 const token = document.querySelector('meta[name="lightworker-token"]').content;
 const state = {
   lang: localStorage.getItem('lw-lang') || 'zh',
@@ -33,7 +33,7 @@ const I18N = {
     'board.empty': '暂时没有任务', 'board.emptySub': '创建一个自动规划目标，或提交单个只读 Worker。', 'kanban.empty': '暂无任务',
     'col.queued': '等待调度', 'col.running': '进行中', 'col.awaiting_approval': '待审批', 'col.completed': '已完成', 'col.failed': '异常',
     'filter.all': '全部', 'filter.failed': '异常',
-    'status.queued': '等待调度', 'status.starting': '正在启动', 'status.running': '正在运行', 'status.awaiting_approval': '需要审批',
+    'status.queued': '等待调度', 'status.starting': '正在启动', 'status.awaiting_native_dispatch': '等待 Codex 子代理', 'status.native_dispatching': '正在创建 Codex 子代理', 'status.running': '正在运行', 'status.awaiting_approval': '需要审批',
     'status.completed': '已完成', 'status.failed': '失败', 'status.cancelled': '已取消', 'status.blocked': '已阻塞', 'status.orphaned': '已孤立',
     'role.plan': 'Planner', 'role.explore': 'Explorer', 'role.execute': 'Executor', 'role.review': 'Reviewer',
     'cache.targetTitle': '目标 Cohort 状态', 'cache.title': '缓存 Cohort 明细', 'cache.colPath': '网关 / 模型', 'cache.colStatus': '状态', 'cache.colSamples': '样本', 'cache.colHit': '命中率',
@@ -59,7 +59,7 @@ const I18N = {
     'dlg.gateway': '网关', 'dlg.maxSub': '最大子任务', 'dlg.contextPack': '共享 Context Pack（可选，最多 32KiB）',
     'dlg.contextPackPh': '仅填写多次任务都需要的稳定、已审阅上下文；不要填密钥或动态日志。', 'dlg.submitOrch': '生成任务 DAG',
     'dlg.singleObjective': '任务目标', 'dlg.singleObjectivePh': '给 Worker 一个边界清楚、可验证的目标。', 'dlg.kind': '角色',
-    'dlg.workerProfile': 'Worker Profile', 'dlg.model': '模型', 'dlg.channel': '执行通道', 'dlg.channelNative': 'OpenCodex 原生子代理',
+    'dlg.workerProfile': 'Worker Profile', 'dlg.model': '模型', 'dlg.channel': '执行通道', 'dlg.channelNative': 'Codex 原生子代理桥接',
     'dlg.capabilities': '所需能力', 'dlg.capabilitiesPh': '例如：web_search', 'dlg.effort': '推理强度', 'dlg.effortAuto': '按 Profile / 自动路由',
     'dlg.timeout': '超时（秒）', 'dlg.success': '成功条件', 'dlg.successPh': '例如：列出文件证据并给出可复现命令',
     'dlg.contextPackPh2': '相同 Cohort 的 Worker 使用完全相同的稳定上下文。', 'dlg.submitSingle': '提交 Worker',
@@ -105,7 +105,7 @@ const I18N = {
     'board.empty': 'No tasks yet', 'board.emptySub': 'Create an auto-planned objective, or submit a single read-only worker.', 'kanban.empty': 'No tasks',
     'col.queued': 'Queued', 'col.running': 'Running', 'col.awaiting_approval': 'Approval', 'col.completed': 'Done', 'col.failed': 'Failed',
     'filter.all': 'All', 'filter.failed': 'Failed',
-    'status.queued': 'Queued', 'status.starting': 'Starting', 'status.running': 'Running', 'status.awaiting_approval': 'Needs Approval',
+    'status.queued': 'Queued', 'status.starting': 'Starting', 'status.awaiting_native_dispatch': 'Waiting for Codex subagent', 'status.native_dispatching': 'Spawning Codex subagent', 'status.running': 'Running', 'status.awaiting_approval': 'Needs Approval',
     'status.completed': 'Completed', 'status.failed': 'Failed', 'status.cancelled': 'Cancelled', 'status.blocked': 'Blocked', 'status.orphaned': 'Orphaned',
     'role.plan': 'Planner', 'role.explore': 'Explorer', 'role.execute': 'Executor', 'role.review': 'Reviewer',
     'cache.targetTitle': 'Target cohort status', 'cache.title': 'Cache cohort details', 'cache.colPath': 'Gateway / Model', 'cache.colStatus': 'Status', 'cache.colSamples': 'Samples', 'cache.colHit': 'Hit Rate',
@@ -132,7 +132,7 @@ const I18N = {
     'dlg.contextPack': 'Shared Context Pack (optional, up to 32KiB)',
     'dlg.contextPackPh': 'Only stable, reviewed context reused across tasks; do not include secrets or dynamic logs.', 'dlg.submitOrch': 'Generate Task DAG',
     'dlg.singleObjective': 'Task Objective', 'dlg.singleObjectivePh': 'Give the worker a well-bounded, verifiable objective.', 'dlg.kind': 'Role',
-    'dlg.workerProfile': 'Worker Profile', 'dlg.model': 'Model', 'dlg.channel': 'Execution Channel', 'dlg.channelNative': 'OpenCodex native subagent',
+    'dlg.workerProfile': 'Worker Profile', 'dlg.model': 'Model', 'dlg.channel': 'Execution Channel', 'dlg.channelNative': 'Codex native subagent bridge',
     'dlg.capabilities': 'Required Capabilities', 'dlg.capabilitiesPh': 'e.g. web_search', 'dlg.effort': 'Reasoning Effort', 'dlg.effortAuto': 'By Profile / auto route',
     'dlg.timeout': 'Timeout (s)', 'dlg.success': 'Success Criteria', 'dlg.successPh': 'e.g. List file evidence and give a reproducible command',
     'dlg.contextPackPh2': 'Workers in the same cohort use identical stable context.', 'dlg.submitSingle': 'Submit Worker',
@@ -256,8 +256,8 @@ function renderCurrentView() {
 
 /* ================= metrics (always-on) ================= */
 function counts() {
-  const c = Object.fromEntries(['queued', 'starting', 'running', 'awaiting_approval', 'completed', 'failed', 'blocked', 'cancelled', 'orphaned'].map((k) => [k, state.tasks.filter((x) => x.status === k).length]));
-  c.active = c.running + c.starting;
+  const c = Object.fromEntries(['queued', 'starting', 'awaiting_native_dispatch', 'native_dispatching', 'running', 'awaiting_approval', 'completed', 'failed', 'blocked', 'cancelled', 'orphaned'].map((k) => [k, state.tasks.filter((x) => x.status === k).length]));
+  c.active = c.running + c.starting + c.awaiting_native_dispatch + c.native_dispatching;
   c.finished = c.completed + c.failed + c.blocked + c.cancelled + c.orphaned;
   c.problem = c.failed + c.blocked + c.orphaned;
   return c;
@@ -374,14 +374,14 @@ function renderOverview() {
 /* ================= tasks ================= */
 const KANBAN_COLUMNS = [
   { key: 'queued', labelKey: 'col.queued', match: ['queued'] },
-  { key: 'running', labelKey: 'col.running', match: ['running', 'starting'] },
+  { key: 'running', labelKey: 'col.running', match: ['running', 'starting', 'awaiting_native_dispatch', 'native_dispatching'] },
   { key: 'awaiting_approval', labelKey: 'col.awaiting_approval', match: ['awaiting_approval'] },
   { key: 'completed', labelKey: 'col.completed', match: ['completed'] },
   { key: 'failed', labelKey: 'col.failed', match: ['failed', 'blocked', 'orphaned', 'cancelled'] },
 ];
 const FILTERS = [
   { key: '', labelKey: 'filter.all', match: null },
-  { key: 'running', labelKey: 'col.running', match: ['running', 'starting'] },
+  { key: 'running', labelKey: 'col.running', match: ['running', 'starting', 'awaiting_native_dispatch', 'native_dispatching'] },
   { key: 'queued', labelKey: 'col.queued', match: ['queued'] },
   { key: 'awaiting_approval', labelKey: 'col.awaiting_approval', match: ['awaiting_approval'] },
   { key: 'completed', labelKey: 'col.completed', match: ['completed'] },

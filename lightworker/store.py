@@ -6,7 +6,7 @@ import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -73,6 +73,12 @@ class TaskStore:
                 error TEXT,
                 pid INTEGER,
                 lease_id TEXT,
+                native_thread_id TEXT,
+                native_host_id TEXT,
+                native_lease_id TEXT,
+                native_lease_expires_at TEXT,
+                native_dispatch_attempts INTEGER NOT NULL DEFAULT 0,
+                native_last_state TEXT,
                 worktree_path TEXT,
                 branch_name TEXT,
                 created_at TEXT NOT NULL,
@@ -149,6 +155,7 @@ class TaskStore:
             """
         )
         self._ensure_usage_sample_columns(conn)
+        self._ensure_task_columns(conn)
         conn.execute(
             """
             UPDATE usage_samples SET cohort_class='indeterminate'
@@ -176,6 +183,25 @@ class TaskStore:
                 except sqlite3.OperationalError as exc:
                     # Another process may have completed the additive migration
                     # after this connection read PRAGMA table_info.
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
+
+    @staticmethod
+    def _ensure_task_columns(conn: sqlite3.Connection) -> None:
+        existing = {str(row[1]) for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        additions = {
+            "native_thread_id": "TEXT",
+            "native_host_id": "TEXT",
+            "native_lease_id": "TEXT",
+            "native_lease_expires_at": "TEXT",
+            "native_dispatch_attempts": "INTEGER NOT NULL DEFAULT 0",
+            "native_last_state": "TEXT",
+        }
+        for name, declaration in additions.items():
+            if name not in existing:
+                try:
+                    conn.execute(f"ALTER TABLE tasks ADD COLUMN {name} {declaration}")
+                except sqlite3.OperationalError as exc:
                     if "duplicate column name" not in str(exc).lower():
                         raise
 
@@ -610,7 +636,7 @@ class TaskStore:
             return self.ensure_root_budget(root_id)
         budget = dict(row)
         active = self._connection().execute(
-            "SELECT COUNT(*) FROM tasks WHERE root_id=? AND status IN ('starting','running')",
+            "SELECT COUNT(*) FROM tasks WHERE root_id=? AND status IN ('starting','awaiting_native_dispatch','native_dispatching','running')",
             (root_id,),
         ).fetchone()[0]
         budget["active_workers"] = int(active)
@@ -720,7 +746,7 @@ class TaskStore:
                   )
                   AND (
                     SELECT COUNT(*) FROM tasks active
-                    WHERE active.root_id=t.root_id AND active.status IN ('starting','running')
+                    WHERE active.root_id=t.root_id AND active.status IN ('starting','awaiting_native_dispatch','native_dispatching','running')
                   ) < COALESCE(
                     (SELECT budget.max_concurrency FROM root_budgets budget WHERE budget.root_id=t.root_id),
                     2
@@ -752,7 +778,7 @@ class TaskStore:
             )
             budget = conn.execute("SELECT * FROM root_budgets WHERE root_id=?", (root_id,)).fetchone()
             active = conn.execute(
-                "SELECT COUNT(*) FROM tasks WHERE root_id=? AND status IN ('starting','running')", (root_id,)
+                "SELECT COUNT(*) FROM tasks WHERE root_id=? AND status IN ('starting','awaiting_native_dispatch','native_dispatching','running')", (root_id,)
             ).fetchone()[0]
             if int(active) >= int(budget["max_concurrency"]):
                 return None
@@ -821,6 +847,106 @@ class TaskStore:
         self._connection().execute("UPDATE tasks SET pid=? WHERE id=?", (pid, task_id))
         self.add_event(task_id, "worker.started", {"pid": pid})
 
+    def stage_native_dispatch(self, task_id: str) -> bool:
+        """Expose a claimed native task to the Codex-host bridge, never codex exec."""
+        cur = self._connection().execute(
+            """
+            UPDATE tasks SET status='awaiting_native_dispatch',lease_id=NULL,native_last_state='queued'
+            WHERE id=? AND status='starting'
+            """,
+            (task_id,),
+        )
+        if cur.rowcount:
+            self.add_event(task_id, "native.dispatch_ready", {})
+        return bool(cur.rowcount)
+
+    def claim_native_dispatches(self, host_id: str, limit: int = 1, lease_seconds: int = 90) -> list[dict[str, Any]]:
+        if not host_id or len(host_id) > 128:
+            raise ValueError("host_id must be 1..128 characters")
+        lease_seconds = max(15, min(int(lease_seconds), 3600))
+        claimed: list[dict[str, Any]] = []
+        now = datetime.now(UTC)
+        expires = (now + timedelta(seconds=lease_seconds)).isoformat()
+        with self.transaction(immediate=True) as conn:
+            rows = conn.execute(
+                """SELECT * FROM tasks WHERE status='awaiting_native_dispatch'
+                   ORDER BY priority DESC,created_at ASC LIMIT ?""",
+                (max(1, min(int(limit), 12)),),
+            ).fetchall()
+            for row in rows:
+                task_id = str(row["id"])
+                lease_id = uuid.uuid4().hex
+                cur = conn.execute(
+                    """UPDATE tasks SET status='native_dispatching',native_host_id=?,native_lease_id=?,
+                       native_lease_expires_at=?,native_dispatch_attempts=native_dispatch_attempts+1,
+                       native_last_state='claimed' WHERE id=? AND status='awaiting_native_dispatch'""",
+                    (host_id, lease_id, expires, task_id),
+                )
+                if cur.rowcount:
+                    item = dict(row)
+                    item.update({"native_host_id": host_id, "native_lease_id": lease_id, "native_lease_expires_at": expires})
+                    claimed.append(item)
+        for row in claimed:
+            self.add_event(str(row["id"]), "native.dispatch_claimed", {"host_id": host_id, "lease_expires_at": expires})
+        return claimed
+
+    def native_started(self, task_id: str, lease_id: str, thread_id: str) -> bool:
+        if not thread_id or len(thread_id) > 256:
+            raise ValueError("thread_id must be 1..256 characters")
+        cur = self._connection().execute(
+            """UPDATE tasks SET status='running',native_thread_id=?,native_last_state='running',
+               started_at=COALESCE(started_at, ?) WHERE id=? AND status='native_dispatching' AND native_lease_id=?""",
+            (thread_id, utc_now(), task_id, lease_id),
+        )
+        if cur.rowcount:
+            self.add_event(task_id, "native.subagent_started", {"thread_id": thread_id})
+        return bool(cur.rowcount)
+
+    def native_event(self, task_id: str, lease_id: str, event_type: str, payload: dict[str, Any] | None = None) -> bool:
+        if not event_type.startswith("native.") or len(event_type) > 96:
+            raise ValueError("event_type must start with native.")
+        payload = payload or {}
+        encoded = json.dumps(payload, ensure_ascii=False)
+        if len(encoded) > 16_384:
+            raise ValueError("native event payload exceeds 16 KiB")
+        expires = (datetime.now(UTC) + timedelta(seconds=90)).isoformat()
+        cur = self._connection().execute(
+            """UPDATE tasks SET native_lease_expires_at=?,native_last_state=?
+               WHERE id=? AND status IN ('native_dispatching','running') AND native_lease_id=?""",
+            (expires, event_type, task_id, lease_id),
+        )
+        if cur.rowcount:
+            self.add_event(task_id, event_type, payload)
+        return bool(cur.rowcount)
+
+    def native_complete(self, task_id: str, lease_id: str, status: str, *, result: dict[str, Any] | None = None, error: str | None = None) -> bool:
+        if status not in {"completed", "failed", "cancelled", "blocked"}:
+            raise ValueError("native completion status is invalid")
+        cur = self._connection().execute(
+            """UPDATE tasks SET status=?,result_json=?,error=?,finished_at=?,native_last_state=?,
+               native_lease_expires_at=NULL WHERE id=? AND status IN ('native_dispatching','running') AND native_lease_id=?""",
+            (status, json.dumps(result, ensure_ascii=False) if result is not None else None, error, utc_now(), status, task_id, lease_id),
+        )
+        if cur.rowcount:
+            self.add_event(task_id, "native.subagent_completed", {"status": status, "error": error})
+        return bool(cur.rowcount)
+
+    def requeue_expired_native_dispatches(self) -> int:
+        now = utc_now()
+        with self.transaction(immediate=True) as conn:
+            rows = conn.execute(
+                "SELECT id FROM tasks WHERE status='native_dispatching' AND native_lease_expires_at<?", (now,)
+            ).fetchall()
+            conn.execute(
+                """UPDATE tasks SET status='awaiting_native_dispatch',native_lease_id=NULL,
+                   native_lease_expires_at=NULL,native_last_state='lease_expired'
+                   WHERE status='native_dispatching' AND native_lease_expires_at<?""",
+                (now,),
+            )
+        for row in rows:
+            self.add_event(str(row["id"]), "native.dispatch_lease_expired", {})
+        return len(rows)
+
     def approve(self, task_id: str) -> bool:
         cur = self._connection().execute(
             "UPDATE tasks SET status='queued',finished_at=NULL,error=NULL WHERE id=? AND status='awaiting_approval'",
@@ -858,7 +984,7 @@ class TaskStore:
     def reconcile_after_restart(self) -> int:
         with self.transaction(immediate=True) as conn:
             rows = conn.execute(
-                "SELECT id FROM tasks WHERE status IN ('starting','running')"
+                "SELECT id FROM tasks WHERE status IN ('starting','native_dispatching','running')"
             ).fetchall()
             for row in rows:
                 conn.execute(
@@ -891,6 +1017,8 @@ class TaskStore:
 
     def has_pending_work(self) -> bool:
         row = self._connection().execute(
+            # Native states are owned by the interactive Codex host.  A local
+            # scheduler is idle once it has staged their durable tickets.
             "SELECT 1 FROM tasks WHERE status IN ('queued','starting','running') LIMIT 1"
         ).fetchone()
         return row is not None
