@@ -27,7 +27,7 @@
 
 LightWorker is a lightweight, local-first multi-agent task runner with no third-party Python runtime dependencies. It lets Codex submit tasks through MCP, persists the task DAG in SQLite, executes Workers with `codex exec --json`, and uses an isolated Git worktree for write tasks.
 
-> **Development status:** `v0.6.0` is the local development branch. It adds a real Codex-native subagent bridge: the active Codex host claims a durable ticket, calls `spawn_agent`, waits for the resulting thread, and writes back its state and compact result. It never disguises `codex exec` as a native child thread. By default, LightWorker listens only on the local loopback address and does not automatically commit, merge, push, or publish; write tasks require approval and run in an isolated Git worktree. See [CODEX_NATIVE_BRIDGE.md](docs/CODEX_NATIVE_BRIDGE.md) and [README_CN.md](README_CN.md).
+> **Current release:** `v0.6.0` adds a real Codex-native subagent bridge: the active Codex host claims a durable ticket, calls `spawn_agent`, waits for the resulting thread, and writes back its state and compact result. It never disguises `codex exec` as a native child thread. By default, LightWorker listens only on the local loopback address and does not automatically commit, merge, push, or publish; write tasks require approval and run in an isolated Git worktree. See [CODEX_NATIVE_BRIDGE.md](docs/CODEX_NATIVE_BRIDGE.md) and [README_CN.md](README_CN.md).
 
 ## Core Capabilities
 
@@ -70,10 +70,10 @@ The local development verification environment is Python 3.13, Git 2.51, Codex C
 
 ## Installation
 
-Install the CI-verified universal wheel directly from the v0.2.0 GitHub release:
+Install the CI-verified universal wheel directly from the v0.6.0 GitHub release:
 
 ```bash
-python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.2.0/lightworker-0.2.0-py3-none-any.whl
+python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.6.0/lightworker-0.6.0-py3-none-any.whl
 lightworker init
 lightworker doctor
 ```
@@ -81,7 +81,7 @@ lightworker doctor
 SHA-256 checksums for release assets are listed in [`SHA256SUMS.txt`](SHA256SUMS.txt). When developing or auditing the source, you can install from a pinned tag:
 
 ```bash
-git clone --branch v0.2.0 --depth 1 https://github.com/ncepuee/LightWorker.git
+git clone --branch v0.6.0 --depth 1 https://github.com/ncepuee/LightWorker.git
 cd LightWorker
 python -m pip install -e .
 ```
@@ -133,7 +133,7 @@ lightworker orchestrate `
   "Find the cause of intermittent HTTP 500 errors in the login endpoint and provide an evidence-backed remediation plan."
 ```
 
-Example default routing in v0.2.0:
+Example default routing in v0.6.0:
 
 | Task type | Default model |
 |---|---|

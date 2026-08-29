@@ -26,7 +26,7 @@
 
 LightWorker 是一个本地优先、零运行时依赖的轻量多 Agent Worker Runner。它让 Codex 通过 MCP 提交任务，用 SQLite 保存任务 DAG，通过 `codex exec --json` 执行 Worker，并对写任务使用独立 git worktree。
 
-本地开发版 `0.6.0` 将 LightWorker 定位为 OpenCodex、CLIProxyAPI 和本地模型桥接器之上的策略调度层：
+正式版 `0.6.0` 将 LightWorker 定位为 OpenCodex、CLIProxyAPI 和本地模型桥接器之上的策略调度层：
 
 - Lead Codex 自动生成依赖任务图。
 - Explorer、Executor、Reviewer 采用明确角色和结构化结果。
