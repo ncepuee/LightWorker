@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0 - Unreleased
+
+### Added
+
+- Codex 原生子代理桥接：`native_subagent` 任务经过 durable dispatch ticket 由当前 Codex 会话真实 `spawn_agent`，并通过 `native_subagent_started`、`native_subagent_event`、`native_subagent_completed` 回写 thread ID、进度和终态结果。
+- 任务状态机新增 `awaiting_native_dispatch` / `native_dispatching`，SQLite 保存原生线程标识、主机、租约、调度次数与最近状态，避免重复拉起。
+- 领用租约过期后任务可安全回到待分派；重复或过期回写被拒绝。
+- 管理页显示 Codex 原生桥接的等待与创建状态。
+
+### Changed
+
+- 原生子代理任务不再走 `codex exec` 兼容路径；本地 Scheduler 仅负责校验、预算与任务票据，实际子线程始终由 Codex 主会话拥有。
+
 ## 0.5.1 - 2026-08-28
 
 ### Added

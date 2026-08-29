@@ -4,11 +4,14 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-TERMINAL_STATUSES = {"completed", "failed", "cancelled", "blocked"}
-ACTIVE_STATUSES = {"starting", "running"}
+TERMINAL_STATUSES = {"completed", "failed", "cancelled", "blocked", "orphaned"}
+# Native work remains active while the Codex host owns the spawned thread.
+ACTIVE_STATUSES = {"starting", "awaiting_native_dispatch", "native_dispatching", "running"}
 KNOWN_STATUSES = {
     "queued",
     "starting",
+    "awaiting_native_dispatch",
+    "native_dispatching",
     "running",
     "awaiting_approval",
     "completed",
@@ -126,6 +129,11 @@ def public_task(row: dict[str, Any]) -> dict[str, Any]:
         "started_at",
         "finished_at",
         "pid",
+        "native_thread_id",
+        "native_host_id",
+        "native_lease_expires_at",
+        "native_dispatch_attempts",
+        "native_last_state",
         "worktree_path",
         "branch_name",
         "result_path",

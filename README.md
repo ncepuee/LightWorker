@@ -27,13 +27,14 @@
 
 LightWorker is a lightweight, local-first multi-agent task runner with no third-party Python runtime dependencies. It lets Codex submit tasks through MCP, persists the task DAG in SQLite, executes Workers with `codex exec --json`, and uses an isolated Git worktree for write tasks.
 
-> **Project status:** `v0.5.0` is the current release. It ships a fully redesigned Mission Control Web Console — hash-routed Overview / Tasks / Cache Lab / System views, a `Ctrl+K` command palette, a tabbed task drawer with JSON highlighting, and an approval inbox — while keeping the zero-dependency, CSP-safe delivery. Since v0.2.0 the runtime also adds capability-aware gateway routing, `lightworker_worker` / `native_subagent` execution channels, approvals bound to immutable task scopes, an explicit worker environment allowlist, and Prompt Protocol v5 cache cohorts. By default, LightWorker listens only on the local loopback address and does not automatically commit, merge, push, or publish; write tasks require approval and run in an isolated Git worktree. See [README_CN.md](README_CN.md) for the full Chinese documentation.
+> **Development status:** `v0.6.0` is the local development branch. It adds a real Codex-native subagent bridge: the active Codex host claims a durable ticket, calls `spawn_agent`, waits for the resulting thread, and writes back its state and compact result. It never disguises `codex exec` as a native child thread. By default, LightWorker listens only on the local loopback address and does not automatically commit, merge, push, or publish; write tasks require approval and run in an isolated Git worktree. See [CODEX_NATIVE_BRIDGE.md](docs/CODEX_NATIVE_BRIDGE.md) and [README_CN.md](README_CN.md).
 
 ## Core Capabilities
 
 | Capability | What it does |
 |---|---|
 | Persistent task DAG | SQLite WAL stores tasks, dependencies, events, PIDs, results, and worktree information |
+| Codex-native bridge | Durable native dispatch tickets, lease protection, native thread IDs, and host callbacks for `spawn_agent` / wait results |
 | Automatic decomposition and parallelism | Lead Codex generates a directed acyclic task graph; independent read-only Workers can run in parallel |
 | Reasoning-aware routing | Mechanical tasks go to DeepSeek V4 Flash by default; complex tasks use `gpt-5.6-sol` |
 | Approval and isolation | `auto_readonly` runs read-only tasks automatically; write tasks wait for approval and enter an isolated Git worktree |

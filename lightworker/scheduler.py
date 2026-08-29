@@ -212,6 +212,12 @@ class Scheduler:
             return
         try:
             spec = self.store.get_spec(task_id)
+            # A native task is deliberately handed back to the interactive Codex
+            # host.  The host later claims the durable ticket and calls
+            # spawn_agent; running codex exec here would be a misleading fallback.
+            if spec.execution_channel == "native_subagent":
+                self.store.stage_native_dispatch(task_id)
+                return
             if not spec.gateway:
                 route = self.cfg.resolve_route(
                     spec.reasoning_effort,

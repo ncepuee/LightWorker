@@ -26,7 +26,7 @@
 
 LightWorker 是一个本地优先、零运行时依赖的轻量多 Agent Worker Runner。它让 Codex 通过 MCP 提交任务，用 SQLite 保存任务 DAG，通过 `codex exec --json` 执行 Worker，并对写任务使用独立 git worktree。
 
-本机版 `0.5.0` 将 LightWorker 定位为 OpenCodex、CLIProxyAPI 和本地模型桥接器之上的策略调度层：
+本地开发版 `0.6.0` 将 LightWorker 定位为 OpenCodex、CLIProxyAPI 和本地模型桥接器之上的策略调度层：
 
 - Lead Codex 自动生成依赖任务图。
 - Explorer、Executor、Reviewer 采用明确角色和结构化结果。
@@ -39,7 +39,7 @@ LightWorker 是一个本地优先、零运行时依赖的轻量多 Agent Worker 
 - 任务创建时固定网关、上游模型、模型目录 revision 和协议模式；目录改变后旧任务会失败关闭，避免运行中漂移。
 - 网关显式声明 `responses`、`translated_responses`、`chat_to_responses`、`web_search`、`codex_tools` 和 `native_subagents` 等能力。
 - 任务按所需能力选择网关；需要原生 `web_search` 时不会错误回退到 translated 网关。
-- `lightworker_worker` 与 `native_subagent` 是两个独立执行通道，原生子代理不得递归调用 LightWorker。
+- `lightworker_worker` 与 `native_subagent` 是两个独立执行通道；后者由当前 Codex 会话领取任务票据并真实调用 `spawn_agent`，在等待线程后回写状态与结果，不会降级伪装为 `codex exec`。
 - WorkBuddy 11 个模型从 OpenCodex 目录发现，LightWorker 不保存登录信息或 Bridge 密钥；Bridge 0.5.0 按显式 `workbuddy/<model>` 请求自适应直达，Chat-only Bridge 必须先经过 `chat_to_responses` 兼容层。
 - 审批绑定 `approval_id + scope_digest`，覆盖文件范围、网关、能力、沙箱、worktree 和目录 revision。
 - OpenCodex 默认走 Native Responses；CLIProxyAPI 作为显式手动备用，标记为 Responses → Chat 转译。
