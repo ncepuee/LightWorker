@@ -10,13 +10,13 @@
 
 <p align="center">
   <a href="https://openai.com/codex/"><img alt="ZCode & Codex Support" src="https://img.shields.io/badge/Dual_Harness-ZCode_%26_Codex-007ACC?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTEyIDJMMiA3bDEwIDUgMTAtNS0xMC01ek0yIDE3bDEwIDUgMTAtNS0xMC01LXRvLTUtMTB6bTAgLTRsMTAgNSAxMC01LTEwLTUtMTB6Ii8+PC9zdmc+&logoColor=white"></a>
-  <a href="https://chatglm.cn/"><img alt="GLM-5.3-Flash Agent used @0.7.0" src="https://img.shields.io/badge/GLM--5.3--Flash-Agent_used%400.7.0-2563EB"></a>
+  <a href="https://chatglm.cn/"><img alt="GLM-5.3-Flash Agent used @0.7.1" src="https://img.shields.io/badge/GLM--5.3--Flash-Agent_used%400.7.1-2563EB"></a>
   <a href="https://github.com/ncepuee/LightWorker"><img alt="GitHub stars" src="https://img.shields.io/github/stars/ncepuee/LightWorker?logo=github&cacheSeconds=86400"></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/ncepuee/LightWorker/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ncepuee/LightWorker/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/ncepuee/LightWorker/releases/latest"><img alt="Release v0.7.0" src="https://img.shields.io/badge/Release-v0.7.0-31D0AA"></a>
+  <a href="https://github.com/ncepuee/LightWorker/releases/latest"><img alt="Release v0.7.1" src="https://img.shields.io/badge/Release-v0.7.1-31D0AA"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-31D0AA.svg"></a>
 </p>
@@ -33,7 +33,7 @@
 
 LightWorker is a lightweight, local-first multi-agent task runner with no third-party Python runtime dependencies. It provides dual worker harness execution for both OpenAI Codex and ZCode / GLM CLI, persists the task DAG in SQLite, and uses an isolated Git worktree for write tasks.
 
-> **Current release:** `v0.7.0` introduces a native **Dual Worker Harness** architecture supporting both `CodexWorker` (`codex exec`) and `ZCodeWorker` (`node zcode.cjs`) with zero-configuration Windows installation path auto-detection. It also provides the full Codex-native subagent bridge introduced in v0.6.0. By default, LightWorker listens only on the local loopback address and does not automatically commit, merge, push, or publish; write tasks require approval and run in an isolated Git worktree. See [CODEX_NATIVE_BRIDGE.md](docs/CODEX_NATIVE_BRIDGE.md) and [README_CN.md](README_CN.md).
+> **Current release:** `v0.7.1` hardens the native **Dual Worker Harness** architecture with reliable ZCode routing, whole-document result parsing, gateway-independent execution, provider status reporting, and cache-cohort isolation. It retains the v0.7.0 support for both `CodexWorker` (`codex exec`) and `ZCodeWorker` (`node zcode.cjs`) plus the Codex-native subagent bridge introduced in v0.6.0. By default, LightWorker listens only on the local loopback address and does not automatically commit, merge, push, or publish; write tasks require approval and run in an isolated Git worktree. See [CODEX_NATIVE_BRIDGE.md](docs/CODEX_NATIVE_BRIDGE.md) and [README_CN.md](README_CN.md).
 
 ## Core Capabilities
 
@@ -78,18 +78,18 @@ The local development verification environment is Python 3.13, Git 2.51, Codex C
 
 ## Installation
 
-Install the CI-verified universal wheel directly from the v0.7.0 GitHub release:
+Install the CI-verified universal wheel directly from the v0.7.1 GitHub release:
 
 ```bash
-python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.7.0/lightworker-0.7.0-py3-none-any.whl
+python -m pip install https://github.com/ncepuee/LightWorker/releases/download/v0.7.1/lightworker-0.7.1-py3-none-any.whl
 lightworker init
 lightworker doctor
 ```
 
-SHA-256 checksums for release assets are listed in [`SHA256SUMS-v0.7.0.txt`](SHA256SUMS-v0.7.0.txt). When developing or auditing the source, you can install from a pinned tag:
+SHA-256 checksums for release assets are listed in [`SHA256SUMS-v0.7.1.txt`](SHA256SUMS-v0.7.1.txt). When developing or auditing the source, you can install from a pinned tag:
 
 ```bash
-git clone --branch v0.7.0 --depth 1 https://github.com/ncepuee/LightWorker.git
+git clone --branch v0.7.1 --depth 1 https://github.com/ncepuee/LightWorker.git
 cd LightWorker
 python -m pip install -e .
 ```
@@ -141,7 +141,7 @@ lightworker orchestrate `
   "Find the cause of intermittent HTTP 500 errors in the login endpoint and provide an evidence-backed remediation plan."
 ```
 
-Example default routing in v0.7.0:
+Example default routing in v0.7.1:
 
 | Task type | Default model |
 |---|---|

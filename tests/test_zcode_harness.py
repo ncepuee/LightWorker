@@ -82,3 +82,56 @@ def test_config_accepts_zcode_harness(tmp_path):
     cfg = make_config(tmp_path, worker_harness="zcode", zcode_command="zcode-dev")
     assert cfg.worker_harness == "zcode"
     assert cfg.zcode_command == "zcode-dev"
+
+
+# ---------------------------------------------------------------------------
+# v0.7.1: ZCode --json whole-document parsing
+# ---------------------------------------------------------------------------
+
+
+def test_parse_zcode_document_pretty_multiline():
+    from lightworker.worker import _parse_zcode_document
+
+    doc = '{\n  "sessionId": "sess_x",\n  "response": "ok",\n  "usage": {"totalTokens": 42}\n}\n'
+    assert _parse_zcode_document(doc)["response"] == "ok"
+
+
+def test_parse_zcode_document_tolerates_surrounding_noise():
+    from lightworker.worker import _parse_zcode_document
+
+    text = 'warn: booting\n{\n  "response": "ok"\n}\ntrailing line\n'
+    assert _parse_zcode_document(text)["response"] == "ok"
+
+
+def test_parse_zcode_document_returns_none_without_json():
+    from lightworker.worker import _parse_zcode_document
+
+    assert _parse_zcode_document("no json here") is None
+    assert _parse_zcode_document("") is None
+
+
+def test_zcode_worker_runs_fake_cli_pretty_document(tmp_path):
+    """Real subprocess test: a stub zcode.cjs printing ZCode's actual output shape."""
+    from lightworker.worker import ZCodeWorker as _W
+
+    cli = tmp_path / "zcode.cjs"
+    cli.write_text(
+        "const response = JSON.stringify({status:'completed',summary:'done',evidence:[],changed_files:[],tests:[],risks:[],followups:[]});\n"
+        "process.stdout.write(JSON.stringify({sessionId:'sess_x',response,usage:{totalTokens:7}},null,2));\n",
+        encoding="utf-8",
+    )
+    cfg = make_config(tmp_path, zcode_cli_path=str(cli))
+    worker = _W(cfg)
+    if worker._command_prefix() is None:  # node unavailable on the runner
+        pytest.skip("node is not available")
+    result = worker.run(
+        "task-fake",
+        make_spec(kind="explore"),
+        tmp_path,
+        on_event=lambda *args: None,
+        on_pid=lambda pid: None,
+        is_cancelled=lambda: False,
+    )
+    assert result.status == "completed"
+    assert result.result["summary"] == "done"
+    assert result.result["harness"] == "zcode"

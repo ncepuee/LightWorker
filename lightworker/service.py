@@ -27,6 +27,47 @@ class LightWorkerService:
         self.store = store
         self.scheduler = scheduler
 
+    @staticmethod
+    def _zcode_provider_status() -> dict[str, Any] | None:
+        """Provider/plan connection facts from the ZCode CLI config.
+
+        Reports names, endpoints, and model selections only. Key material is
+        never read into the result — a boolean says whether one is configured.
+        """
+        config_path = os.environ.get("ZCODE_CONFIG_PATH")
+        path = Path(config_path).expanduser() if config_path else Path.home() / ".zcode" / "cli" / "config.json"
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        model = data.get("model") if isinstance(data.get("model"), dict) else {}
+        providers = data.get("provider") if isinstance(data.get("provider"), dict) else {}
+        provider_id = str(model.get("main", "")).split("/", 1)[0] if model.get("main") else None
+        entry = providers.get(provider_id) if provider_id and isinstance(providers.get(provider_id), dict) else None
+        status: dict[str, Any] = {
+            "config_path": str(path),
+            "main_model": model.get("main"),
+            "lite_model": model.get("lite"),
+        }
+        if entry is not None:
+            options = entry.get("options") if isinstance(entry.get("options"), dict) else {}
+            status["provider"] = {
+                "id": provider_id,
+                "name": entry.get("name"),
+                "kind": entry.get("kind"),
+                "base_url": options.get("baseURL"),
+                "api_key_configured": bool(options.get("apiKey")),
+                "models": sorted(entry.get("models", {}) or {}),
+            }
+        else:
+            status["provider"] = None
+        return status
+
+
     def _root_budget_limits(self, requested: dict[str, Any] | None = None) -> dict[str, int]:
         if requested is not None and not isinstance(requested, dict):
             raise PolicyError("budget must be an object")
@@ -202,10 +243,12 @@ class LightWorkerService:
             raise PolicyError(f"Unknown harness: {harness}")
         profile = str(data["profile"]) if data.get("profile") else None
         requested_effort = str(data["reasoning_effort"]) if data.get("reasoning_effort") else None
-        requested_gateway = str(data["gateway"]) if data.get("gateway") else None
         execution_channel = str(data.get("execution_channel", "lightworker_worker"))
         if harness == "zcode" and execution_channel == "native_subagent":
             raise PolicyError("native_subagent channel requires the codex harness")
+        requested_gateway = str(data["gateway"]) if data.get("gateway") else None
+        if harness == "zcode" and requested_gateway:
+            raise PolicyError("ZCode tasks manage their own provider; gateway routing does not apply")
         raw_capabilities = data.get("required_capabilities", [])
         if not isinstance(raw_capabilities, list):
             raise PolicyError("required_capabilities must be an array")
@@ -221,12 +264,17 @@ class LightWorkerService:
         )
         reasoning_effort = selected.reasoning_effort
         try:
-            route = self.cfg.resolve_route(
-                reasoning_effort,
-                selected.model,
-                selected.gateway,
-                required_capabilities=required_capabilities,
-            )
+            if harness == "zcode":
+                # ZCode signs in with its own provider and plan; never touch
+                # gateway resolution or catalogs for it (they may be offline).
+                route = self.cfg.resolve_zcode_route(required_capabilities=required_capabilities)
+            else:
+                route = self.cfg.resolve_route(
+                    reasoning_effort,
+                    selected.model,
+                    selected.gateway,
+                    required_capabilities=required_capabilities,
+                )
         except ValueError as exc:
             raise PolicyError(str(exc)) from exc
         parent_id = str(data["parent_id"]) if data.get("parent_id") else None
@@ -254,7 +302,7 @@ class LightWorkerService:
             requested_model=str(data["model"]) if data.get("model") else None,
             requested_gateway=requested_gateway,
             requested_reasoning_effort=requested_effort,
-            gateway=route.gateway,
+            gateway=route.gateway if harness != "zcode" else None,
             upstream_model=route.upstream_model,
             response_mode=route.response_mode,
             fallback_gateway=route.fallback_gateway,
@@ -326,6 +374,14 @@ class LightWorkerService:
                 requested_effort = str(payload["reasoning_effort"]) if payload.get("reasoning_effort") else None
                 requested_gateway = str(payload["gateway"]) if payload.get("gateway") else None
                 kind = str(payload.get("kind", "explore"))
+                harness = str(payload.get("harness") or self.cfg.worker_harness or "codex")
+                if harness not in KNOWN_HARNESSES:
+                    raise PolicyError(f"Unknown harness: {harness}")
+                execution_channel = str(payload.get("execution_channel", "lightworker_worker"))
+                if harness == "zcode" and execution_channel == "native_subagent":
+                    raise PolicyError("native_subagent channel requires the codex harness")
+                if harness == "zcode" and requested_gateway:
+                    raise PolicyError("ZCode tasks manage their own provider; gateway routing does not apply")
                 selected = self.cfg.resolve_profile(
                     profile,
                     kind=kind,
@@ -334,26 +390,32 @@ class LightWorkerService:
                     reasoning_effort=requested_effort,
                 )
                 reasoning_effort = selected.reasoning_effort
-                execution_channel = str(payload.get("execution_channel", "lightworker_worker"))
                 raw_capabilities = payload.get("required_capabilities", [])
                 if not isinstance(raw_capabilities, list):
                     raise PolicyError("required_capabilities must be an array")
                 required_capabilities = [str(value) for value in raw_capabilities]
                 if execution_channel == "native_subagent" and "native_subagents" not in required_capabilities:
                     required_capabilities.append("native_subagents")
-                route = self.cfg.resolve_route(
-                    reasoning_effort,
-                    selected.model,
-                    selected.gateway,
-                    required_capabilities=required_capabilities,
-                )
+                if harness == "zcode":
+                    # ZCode signs in with its own provider and plan; never
+                    # touch gateway resolution or catalogs for it.
+                    route = self.cfg.resolve_zcode_route(required_capabilities=required_capabilities)
+                else:
+                    route = self.cfg.resolve_route(
+                        reasoning_effort,
+                        selected.model,
+                        selected.gateway,
+                        required_capabilities=required_capabilities,
+                    )
                 spec = TaskSpec(
                     task_id=generated[name], root_id=root_id, parent_id=None,
-                    name=name, kind=kind, objective=str(payload["objective"]), workspace=str(payload["workspace"]),
+                    name=name, kind=kind, harness=harness,
+                    objective=str(payload["objective"]), workspace=str(payload["workspace"]),
                     model=route.model, profile=selected.profile,
                     requested_model=str(payload["model"]) if payload.get("model") else None,
                     requested_gateway=requested_gateway, requested_reasoning_effort=requested_effort,
-                    gateway=route.gateway, upstream_model=route.upstream_model,
+                    gateway=route.gateway if harness != "zcode" else None,
+                    upstream_model=route.upstream_model,
                     response_mode=route.response_mode, fallback_gateway=route.fallback_gateway,
                     provider=route.provider, billing_class=route.billing_class,
                     execution_channel=execution_channel,
@@ -827,6 +889,7 @@ class LightWorkerService:
             "worker_harness": self.cfg.worker_harness,
             "zcode_path": resolve_executable(self.cfg.zcode_command) if not self.cfg.zcode_cli_path else str(Path(self.cfg.zcode_cli_path).expanduser()),
             "zcode_available": ZCodeWorker(self.cfg).available(),
+            "zcode_provider": self._zcode_provider_status(),
             "cliproxyapi_8317": port_open(8317),
             "opencodex_proxy_10100": port_open(10100),
             "gateways": gateways,
