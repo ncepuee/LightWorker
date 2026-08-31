@@ -60,6 +60,7 @@ const I18N = {
     'dlg.contextPackPh': '仅填写多次任务都需要的稳定、已审阅上下文；不要填密钥或动态日志。', 'dlg.submitOrch': '生成任务 DAG',
     'dlg.singleObjective': '任务目标', 'dlg.singleObjectivePh': '给 Worker 一个边界清楚、可验证的目标。', 'dlg.kind': '角色',
     'dlg.workerProfile': 'Worker Profile', 'dlg.model': '模型', 'dlg.channel': '执行通道', 'dlg.channelNative': 'Codex 原生子代理桥接',
+    'dlg.harness': 'Worker 执行端', 'meta.harness': '执行端',
     'dlg.capabilities': '所需能力', 'dlg.capabilitiesPh': '例如：web_search', 'dlg.effort': '推理强度', 'dlg.effortAuto': '按 Profile / 自动路由',
     'dlg.timeout': '超时（秒）', 'dlg.success': '成功条件', 'dlg.successPh': '例如：列出文件证据并给出可复现命令',
     'dlg.contextPackPh2': '相同 Cohort 的 Worker 使用完全相同的稳定上下文。', 'dlg.submitSingle': '提交 Worker',
@@ -133,6 +134,7 @@ const I18N = {
     'dlg.contextPackPh': 'Only stable, reviewed context reused across tasks; do not include secrets or dynamic logs.', 'dlg.submitOrch': 'Generate Task DAG',
     'dlg.singleObjective': 'Task Objective', 'dlg.singleObjectivePh': 'Give the worker a well-bounded, verifiable objective.', 'dlg.kind': 'Role',
     'dlg.workerProfile': 'Worker Profile', 'dlg.model': 'Model', 'dlg.channel': 'Execution Channel', 'dlg.channelNative': 'Codex native subagent bridge',
+    'dlg.harness': 'Worker harness', 'meta.harness': 'Harness',
     'dlg.capabilities': 'Required Capabilities', 'dlg.capabilitiesPh': 'e.g. web_search', 'dlg.effort': 'Reasoning Effort', 'dlg.effortAuto': 'By Profile / auto route',
     'dlg.timeout': 'Timeout (s)', 'dlg.success': 'Success Criteria', 'dlg.successPh': 'e.g. List file evidence and give a reproducible command',
     'dlg.contextPackPh2': 'Workers in the same cohort use identical stable context.', 'dlg.submitSingle': 'Submit Worker',
@@ -599,7 +601,7 @@ async function loadTask(taskId, silent = false) {
     $('#detail-title').textContent = task.name || task.id;
     $('#detail-objective').textContent = task.objective;
     const protocol = task.response_mode === 'native' ? t('protocol.native') : (task.response_mode === 'translated' ? t('protocol.translated') : null);
-    $('#detail-meta').innerHTML = [statusLabel(task.status), task.profile && `${t('meta.profile')} ${task.profile}`, `${t('meta.model')} ${task.model}`,
+    $('#detail-meta').innerHTML = [statusLabel(task.status), task.harness && `${t('meta.harness')} ${task.harness}`, task.profile && `${t('meta.profile')} ${task.profile}`, `${t('meta.model')} ${task.model}`,
       task.provider && `${t('meta.provider')} ${task.provider}`, task.upstream_model && `${t('meta.upstream')} ${task.upstream_model}`,
       task.gateway && `${t('meta.gateway')} ${task.gateway}`, task.execution_channel && `${t('meta.channel')} ${task.execution_channel}`, protocol,
       task.route_audit && `${t('meta.verified')} ${task.route_audit.verification}`, task.fallback_gateway && `${t('meta.fallback')} ${task.fallback_gateway}`,
@@ -716,6 +718,7 @@ async function submitSingle() {
     objective: $('#single-objective').value.trim(),
     workspace: $('#single-workspace').value.trim(),
     kind: $('#single-kind').value,
+    harness: $('#single-harness').value,
     profile: $('#single-profile').value || null,
     model: $('#single-model').value,
     gateway: $('#single-gateway').value || null,
@@ -798,6 +801,18 @@ $$('.dtab').forEach((button) => button.addEventListener('click', () => {
   $$('.dpane').forEach((pane) => pane.hidden = pane.dataset.dpane !== button.dataset.dtab);
 }));
 $('#search-input').addEventListener('input', (event) => { state.search = event.target.value; renderTasks(); });
+$('#single-harness').addEventListener('change', () => {
+  const nativeOption = $('#single-channel').querySelector('option[value="native_subagent"]');
+  if ($('#single-harness').value === 'zcode') {
+    $('#single-channel').value = 'lightworker_worker';
+    nativeOption.disabled = true;
+  } else {
+    nativeOption.disabled = false;
+  }
+});
+$('#single-channel').addEventListener('change', () => {
+  if ($('#single-channel').value === 'native_subagent') $('#single-harness').value = 'codex';
+});
 $('#new-task-button').addEventListener('click', () => $('#task-dialog').showModal());
 $('#refresh-button').addEventListener('click', () => refresh());
 $('#purge-button').addEventListener('click', async () => {

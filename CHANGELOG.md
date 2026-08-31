@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 - 开发中
+
+### Added
+
+- 双 Worker 执行端（harness）：任务可指定 `codex` 或 `zcode`，调度器按任务分发到对应 Worker 实现；`[runner] worker_harness` 设置默认执行端，`submit --harness` / MCP `delegate_task` / 管理页新建任务均可按任务覆盖。
+- ZCode 无头 Worker：`zcode -p --json --cwd --mode` 驱动，权限映射为 read-only→`--mode plan`、workspace-write→`--mode edit`，永不使用 yolo 模式；`zcode_command` / `zcode_cli_path` 配置 CLI 入口。
+- ZCode 任务的路由字段仅作审计记录（模型来自 Z.AI 登录，不经网关路由），route_verification 恒为 `unverified`；`harness` 纳入审批权限范围与 digest；`zcode` 与 `native_subagent` 通道互斥并在提交时失败关闭。
+- doctor 新增默认执行端与 ZCode CLI 可用性。
+
 ## 0.6.0 - 2026-08-30
 
 ### Added

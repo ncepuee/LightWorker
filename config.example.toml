@@ -27,6 +27,11 @@ codex_ignore_user_config = false
 default_gateway = "opencodex"
 # For an isolated CLIProxyAPI/OpenCodex worker, set true and configure both fields below.
 # codex_ignore_user_config = true
+# Default worker harness: codex or zcode
+# worker_harness = "codex"
+# zcode_command = "zcode"
+# zcode_cli_path = "D:\ZCode\resources\glm\zcode.cjs"
+
 # Allow worker sandbox network access (gh / git push) while keeping workspace-write file limits
 codex_sandbox_network_access = false
 # codex_base_url = "http://127.0.0.1:10100/v1"

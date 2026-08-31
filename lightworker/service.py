@@ -14,10 +14,11 @@ from urllib.request import ProxyHandler, Request, build_opener
 from .approval import stamp_approval, verify_approval
 from .cache import configure_task_cache
 from .config import Config, resolve_executable
-from .models import TaskSpec, public_task
+from .models import KNOWN_HARNESSES, TaskSpec, public_task
 from .policy import PolicyError, topological_order, validate_plan, validate_task
 from .scheduler import Scheduler
 from .store import TaskStore
+from .worker import ZCodeWorker
 
 
 class LightWorkerService:
@@ -196,10 +197,15 @@ class LightWorkerService:
         if kind == "plan":
             raise PolicyError("Plan tasks must be created through orchestrate")
         mode = str(data.get("mode", "auto_readonly"))
+        harness = str(data.get("harness") or self.cfg.worker_harness or "codex")
+        if harness not in KNOWN_HARNESSES:
+            raise PolicyError(f"Unknown harness: {harness}")
         profile = str(data["profile"]) if data.get("profile") else None
         requested_effort = str(data["reasoning_effort"]) if data.get("reasoning_effort") else None
         requested_gateway = str(data["gateway"]) if data.get("gateway") else None
         execution_channel = str(data.get("execution_channel", "lightworker_worker"))
+        if harness == "zcode" and execution_channel == "native_subagent":
+            raise PolicyError("native_subagent channel requires the codex harness")
         raw_capabilities = data.get("required_capabilities", [])
         if not isinstance(raw_capabilities, list):
             raise PolicyError("required_capabilities must be an array")
@@ -240,6 +246,7 @@ class LightWorkerService:
             raise PolicyError("Dependencies must belong to the same root task")
         spec = TaskSpec(
             kind=kind,
+            harness=harness,
             objective=str(data["objective"]),
             workspace=str(data["workspace"]),
             model=route.model,
@@ -817,6 +824,9 @@ class LightWorkerService:
             "database": str(self.cfg.db_path),
             "codex_path": codex_path,
             "codex_version": version,
+            "worker_harness": self.cfg.worker_harness,
+            "zcode_path": resolve_executable(self.cfg.zcode_command) if not self.cfg.zcode_cli_path else str(Path(self.cfg.zcode_cli_path).expanduser()),
+            "zcode_available": ZCodeWorker(self.cfg).available(),
             "cliproxyapi_8317": port_open(8317),
             "opencodex_proxy_10100": port_open(10100),
             "gateways": gateways,

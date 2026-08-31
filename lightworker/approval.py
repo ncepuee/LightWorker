@@ -18,6 +18,7 @@ def build_approval_scope(spec: TaskSpec) -> dict[str, Any]:
         "version": APPROVAL_SCOPE_VERSION,
         "objective_sha256": objective_hash,
         "kind": spec.kind,
+        "harness": spec.harness,
         "workspace": spec.workspace,
         "sandbox": spec.sandbox,
         "mode": spec.mode,

@@ -23,6 +23,7 @@ KNOWN_STATUSES = {
 KNOWN_KINDS = {"plan", "explore", "execute", "review", "image"}
 READ_ONLY_KINDS = {"plan", "explore", "review", "image"}
 KNOWN_EXECUTION_CHANNELS = {"lightworker_worker", "native_subagent"}
+KNOWN_HARNESSES = {"codex", "zcode"}
 
 
 @dataclass(slots=True)
@@ -30,6 +31,7 @@ class TaskSpec:
     objective: str
     workspace: str
     kind: str = "explore"
+    harness: str = "codex"
     model: str = "gpt-5.6-terra"
     profile: str | None = None
     requested_model: str | None = None
@@ -98,6 +100,7 @@ def public_task(row: dict[str, Any]) -> dict[str, Any]:
         "workspace",
         "model",
         "profile",
+        "harness",
         "requested_model",
         "requested_gateway",
         "requested_reasoning_effort",
