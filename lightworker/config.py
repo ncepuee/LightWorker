@@ -45,6 +45,11 @@ WORKBUDDY_IMAGE_MODEL_IDS = (
 )
 WORKBUDDY_IMAGE_MODELS = tuple(f"workbuddy-image/{model}" for model in WORKBUDDY_IMAGE_MODEL_IDS)
 
+# Marker model for ZCode-harness tasks. ZCode carries its own provider login
+# and plan quota, so LightWorker never resolves or verifies an upstream model
+# for them; this marker keeps route audits honest instead of fabricating one.
+ZCODE_MANAGED_MODEL = "zcode-managed"
+
 DEFAULT_ALLOWED_MODELS = (
     "gpt-5.5",
     "gpt-5.6-luna",
@@ -57,6 +62,7 @@ DEFAULT_ALLOWED_MODELS = (
     "google-antigravity/claude-opus-4-6-thinking",
     "cursor/kimi-k2.7-code",
     "cursor/grok-4.5",
+    ZCODE_MANAGED_MODEL,
     *WORKBUDDY_MODELS,
     *WORKBUDDY_IMAGE_MODELS,
 )
@@ -184,7 +190,7 @@ DEFAULT_WORKER_PROFILES = {
 class RouteSelection:
     model: str
     gateway: str
-    upstream_model: str
+    upstream_model: str | None
     response_mode: str
     fallback_gateway: str | None
     cache_cohort: str
@@ -569,6 +575,34 @@ class Config:
             billing_class=route.billing_class if route else None,
             capabilities=self.gateway_capabilities(gateway_name),
             catalog_revision=str(catalog["revision"]) if catalog.get("revision") else None,
+            required_capabilities=required,
+        )
+
+    def resolve_zcode_route(
+        self,
+        required_capabilities: tuple[str, ...] | list[str] = (),
+    ) -> RouteSelection:
+        """Route selection for ZCode-harness tasks; no gateway is involved.
+
+        ZCode signs in with its own provider account and consumes its own plan
+        quota, so gateway reachability, catalogs, and capability matching never
+        apply. ``gateway`` stays an informational ``"zcode"`` marker (service
+        code stores ``None`` on the task so policy skips gateway validation),
+        ``upstream_model`` is deliberately ``None`` — the model is chosen by
+        ZCode itself and is never fabricated as verified.
+        """
+        required = normalize_capabilities(required_capabilities)
+        return RouteSelection(
+            model=ZCODE_MANAGED_MODEL,
+            gateway="zcode",
+            upstream_model=None,
+            response_mode="native",
+            fallback_gateway=None,
+            cache_cohort=f"zcode:native:{','.join(required)}",
+            provider="zcode",
+            billing_class="zcode-plan",
+            capabilities=required,
+            catalog_revision=None,
             required_capabilities=required,
         )
 

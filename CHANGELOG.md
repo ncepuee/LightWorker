@@ -1,6 +1,23 @@
 # Changelog
 
-## 0.7.0 - 开发中
+## 0.7.1 - 开发中
+
+### Fixed
+
+- `delegate_batch` 现在读取并校验每个任务的 `harness`（codex/zcode），未填写时回退 `[runner] worker_harness`；zcode 与 `native_subagent` 互斥，显式 gateway 与 zcode 组合直接拒绝。
+- 自动规划的子任务支持 `harness` 字段：`plan.schema.json` 新增枚举，Scheduler 校验并传递到子任务；未填写时使用默认执行端，`native_subagent` 强制 codex。
+- ZCode 任务完全脱离网关路由：不再调用 `resolve_route`/目录校验，CLIProxyAPI/OpenCodex 离线不影响入队；模型标记为 `zcode-managed`，`upstream_model` 恒为空，路由核验恒为 `unverified`，不伪造已验证路由。
+- 调度器不再把无网关的 ZCode 任务误迁移到默认网关（遗留 route-migration 仅作用于旧版任务）。
+- ZCode `--json` 输出为单个多行 JSON 文档而非 NDJSON：新增整文档兜底解析并识别 `response` 终态字段，修复 "ZCode produced no parsable result"。
+- 已配置网关时 ZCode 任务的 cache cohort 不再查找 legacy 网关导致入队失败。
+- `config.example.toml` 的 Windows 路径示例改用 TOML 字面量字符串（单引号），避免 "Unescaped backslash" 解析错误。
+
+### Added
+
+- 管理页 System 视图显示 ZCode CLI 可用性、默认执行端与 ZCode Provider 套餐连接状态（名称、Base URL、模型数、Key 是否已配置——永不返回密钥本身）；doctor API 新增 `zcode_provider`。
+- 新建任务对话框按执行端动态校验：ZCode 任务只检查 `zcode_available`，Codex 任务检查 CLI 与网关，按钮禁用与错误提示随之切换。
+
+## 0.7.0 - 2026-08-31
 
 ### Added
 
