@@ -225,6 +225,21 @@ def resolve_executable(command: str) -> str | None:
     return shutil.which(command)
 
 
+def find_default_zcode_cli_path() -> str | None:
+    """Detect standard ZCode installation paths if available."""
+    if sys.platform == "win32":
+        candidates = [
+            Path(r"D:\ZCode\resources\glm\zcode.cjs"),
+            Path(r"C:\Program Files\ZCode\resources\glm\zcode.cjs"),
+            Path(r"C:\Program Files (x86)\ZCode\resources\glm\zcode.cjs"),
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "ZCode" / "resources" / "glm" / "zcode.cjs",
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
 def normalize_capabilities(values: object) -> tuple[str, ...]:
     if values is None:
         return ()
@@ -262,7 +277,7 @@ class Config:
     worker_env_allowlist: tuple[str, ...] = ()
     worker_harness: str = "codex"
     zcode_command: str = "zcode"
-    zcode_cli_path: str | None = None
+    zcode_cli_path: str | None = field(default_factory=find_default_zcode_cli_path)
     codex_command: str = "codex"
     codex_ignore_user_config: bool = False
     codex_sandbox_network_access: bool = False
