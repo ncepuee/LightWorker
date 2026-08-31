@@ -15,7 +15,7 @@ from .instance_lock import InstanceLock
 from .models import RunResult, TaskSpec
 from .policy import PolicyError, topological_order, validate_plan, validate_task
 from .store import TaskStore
-from .worker import CodexWorker
+from .worker import CodexWorker, build_worker
 from .worktree import WorktreeError, create_worktree
 
 
@@ -23,7 +23,9 @@ class Scheduler:
     def __init__(self, cfg: Config, store: TaskStore, worker: CodexWorker | None = None):
         self.cfg = cfg
         self.store = store
-        self.worker = worker or CodexWorker(cfg)
+        # Injected worker (tests) takes precedence; otherwise each task picks
+        # its harness at dispatch time via build_worker().
+        self.worker = worker
         self._executor = ThreadPoolExecutor(
             max_workers=cfg.max_concurrency, thread_name_prefix="lightworker"
         )
@@ -274,7 +276,8 @@ class Scheduler:
                 },
             )
 
-            result = self.worker.run(
+            worker = self.worker or build_worker(self.cfg, spec)
+            result = worker.run(
                 task_id,
                 spec,
                 cwd,

@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 from .cache import PROMPT_PROTOCOL_VERSION
 from .config import Config, GatewayConfig, resolve_executable
-from .models import RunResult, TaskSpec
+from .models import KNOWN_HARNESSES, RunResult, TaskSpec
 
 
 EventCallback = Callable[[str, dict[str, Any]], None]
@@ -832,3 +832,228 @@ class CodexWorker:
             exit_code=exit_code,
             result_path=str(result_path),
         )
+
+
+class ZCodeWorker:
+    """Worker harness that runs tasks through the ZCode headless CLI.
+
+    ZCode carries its own model access (Z.AI login), so gateway routing and
+    model overrides do not apply: route fields stay informational and route
+    verification is always unverified. Permission mapping keys off
+    ``spec.sandbox`` — read-only tasks run with ``--mode plan`` and only
+    workspace-write tasks may use ``--mode edit``; the unconstrained ``yolo``
+    mode is never emitted.
+    """
+
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+
+    def available(self) -> bool:
+        return self._command_prefix() is not None
+
+    def _command_prefix(self) -> list[str] | None:
+        if self.cfg.zcode_cli_path:
+            cli = Path(self.cfg.zcode_cli_path).expanduser()
+            if not cli.is_file():
+                return None
+            node = resolve_executable("node")
+            if not node:
+                return None
+            return [node, str(cli)]
+        executable = resolve_executable(self.cfg.zcode_command)
+        return [executable] if executable else None
+
+    @staticmethod
+    def _mode_for(spec: TaskSpec) -> str:
+        if spec.sandbox == "workspace-write" and spec.kind == "execute":
+            return "edit"
+        return "plan"
+
+    def run(
+        self,
+        task_id: str,
+        spec: TaskSpec,
+        cwd: str | Path,
+        on_event: EventCallback,
+        on_pid: PidCallback,
+        is_cancelled: CancelCheck,
+    ) -> RunResult:
+        prefix = self._command_prefix()
+        if not prefix:
+            return RunResult(status="failed", error=f"ZCode command not found: {self.cfg.zcode_command}")
+        resolved_cwd = str(Path(cwd).resolve())
+        result_path = self.cfg.results_dir / f"{task_id}.json"
+        raw_path = self.cfg.results_dir / f"{task_id}.raw.txt" if self.cfg.retain_redacted_raw_results else None
+        self.cfg.results_dir.mkdir(parents=True, exist_ok=True)
+        schema_name = "plan.schema.json" if spec.kind == "plan" else "result.schema.json"
+        schema_path = self.cfg.schemas_dir / schema_name
+        output_schema_text = None
+        if schema_path.exists():
+            try:
+                output_schema_text = json.dumps(
+                    json.loads(schema_path.read_text(encoding="utf-8")),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            except (OSError, json.JSONDecodeError):
+                output_schema_text = None
+        prompt = build_prompt(
+            spec,
+            execution_workspace=resolved_cwd,
+            output_schema_text=output_schema_text,
+        )
+        metadata = prompt_metadata(spec, prompt, schema_path)
+        args = [
+            *prefix,
+            "--json",
+            "-p",
+            prompt,
+            "--cwd",
+            resolved_cwd,
+            "--mode",
+            self._mode_for(spec),
+        ]
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        environment = _zcode_environment(self.cfg)
+        kwargs: dict[str, Any] = {
+            "cwd": resolved_cwd,
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+            "bufsize": 1,
+            "creationflags": creationflags,
+            "env": environment,
+        }
+        if os.name != "nt":
+            kwargs["start_new_session"] = True
+        try:
+            process = subprocess.Popen(args, **kwargs)
+        except OSError as exc:
+            return RunResult(status="failed", error=f"Failed to launch ZCode: {exc}")
+
+        def emit(event_type: str, payload: dict[str, Any]) -> None:
+            try:
+                on_event(event_type, payload)
+            except BaseException:
+                _terminate_process_tree(process)
+                raise
+
+        try:
+            on_pid(process.pid)
+            emit("worker.prompt", metadata)
+        except BaseException:
+            _terminate_process_tree(process)
+            raise
+        output: queue.Queue[tuple[str, str]] = queue.Queue()
+        threads = [
+            threading.Thread(target=_reader, args=(process.stdout, "stdout", output), daemon=True),
+            threading.Thread(target=_reader, args=(process.stderr, "stderr", output), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        started = time.monotonic()
+        result_text: str | None = None
+        last_agent_message: str | None = None
+        cancelled = False
+        timed_out = False
+        while process.poll() is None or any(thread.is_alive() for thread in threads) or not output.empty():
+            if is_cancelled() and process.poll() is None:
+                cancelled = True
+                _terminate_process_tree(process)
+            if time.monotonic() - started > spec.timeout_seconds and process.poll() is None:
+                timed_out = True
+                _terminate_process_tree(process)
+            try:
+                source, line = output.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if not line:
+                continue
+            if source == "stdout":
+                try:
+                    event = redact_value(json.loads(line))
+                except json.JSONDecodeError:
+                    emit("worker.stdout", {"text": redact_text(line)})
+                    continue
+                if not isinstance(event, dict):
+                    emit("worker.stdout", {"text": redact_text(line)})
+                    continue
+                event_type = str(event.get("type", "worker.event"))
+                emit(event_type, event)
+                if event_type == "result" and isinstance(event.get("result"), str):
+                    result_text = str(event["result"])
+                item = event.get("item")
+                if isinstance(item, dict) and item.get("type") == "agent_message" and item.get("text"):
+                    last_agent_message = str(item["text"])
+            else:
+                emit("worker.stderr", {"text": redact_text(line)})
+        exit_code = process.wait()
+        raw = result_text or last_agent_message or ""
+        safe_raw = redact_text(raw)
+        if raw_path:
+            raw_path.write_text(safe_raw, encoding="utf-8")
+        raw_reference = str(raw_path) if raw_path else None
+        emit("worker.schema_raw_saved" if raw_path else "worker.schema_raw_discarded", {
+            "path": raw_reference,
+            "bytes": len(safe_raw.encode("utf-8")),
+            "sha256": sha256_text(safe_raw),
+            "redacted": True,
+            "retained": bool(raw_path),
+        })
+        if cancelled:
+            return RunResult(status="cancelled", error="Task was cancelled", exit_code=exit_code, result_path=raw_reference)
+        if timed_out:
+            return RunResult(status="failed", error="Task timed out", exit_code=exit_code, result_path=raw_reference)
+        if exit_code != 0:
+            return RunResult(status="failed", error=f"ZCode exited with code {exit_code}", exit_code=exit_code, result_path=raw_reference)
+        result = parse_json_candidate(raw)
+        if result is None:
+            if spec.kind != "plan" and raw.strip():
+                result = {
+                    "status": "failed",
+                    "summary": safe_raw.strip() if raw_path else "Worker returned text instead of the required JSON schema",
+                    "evidence": [],
+                }
+            else:
+                return RunResult(status="failed", error="ZCode produced no parsable result", exit_code=exit_code, result_path=raw_reference)
+        result = normalize_worker_result(result)
+        result["raw_result_path"] = raw_reference
+        result["harness"] = "zcode"
+        result["route_verification"] = "unverified"
+        result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        schema_status = str(result["schema_status"])
+        emit(
+            "worker.schema_normalized" if schema_status == "normalized" else (
+                "worker.schema_validated" if schema_status == "valid" else "worker.schema_invalid"
+            ),
+            {"schema_status": schema_status, "schema_valid": bool(result["schema_valid"])},
+        )
+        return RunResult(
+            status="completed",
+            result=result,
+            exit_code=exit_code,
+            result_path=str(result_path),
+        )
+
+
+def _zcode_environment(cfg: Config) -> dict[str, str]:
+    """Least-privilege environment for the ZCode CLI (no gateway injection)."""
+    allowed = {*_SAFE_WORKER_ENV, *(value.upper() for value in cfg.worker_env_allowlist)}
+    environment = {key: value for key, value in os.environ.items() if key.upper() in allowed}
+    environment.update({
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "NO_COLOR": "1",
+    })
+    return environment
+
+
+def build_worker(cfg: Config, spec: TaskSpec):
+    """Return the worker harness for ``spec`` (codex by default)."""
+    harness = spec.harness if spec.harness in KNOWN_HARNESSES else cfg.worker_harness
+    if harness == "zcode":
+        return ZCodeWorker(cfg)
+    return CodexWorker(cfg)

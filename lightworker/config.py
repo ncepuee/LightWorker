@@ -260,6 +260,9 @@ class Config:
     allow_dirty_worktree_source: bool = False
     retain_redacted_raw_results: bool = False
     worker_env_allowlist: tuple[str, ...] = ()
+    worker_harness: str = "codex"
+    zcode_command: str = "zcode"
+    zcode_cli_path: str | None = None
     codex_command: str = "codex"
     codex_ignore_user_config: bool = False
     codex_sandbox_network_access: bool = False
@@ -591,10 +594,15 @@ def load_config(home: str | Path | None = None, config_path: str | Path | None =
             "codex_sandbox_network_access",
             "codex_base_url",
             "codex_model_catalog",
+            "worker_harness",
+            "zcode_command",
+            "zcode_cli_path",
             "default_gateway",
         ):
             if key in runner:
                 setattr(cfg, key, runner[key])
+        if "worker_harness" in runner and runner["worker_harness"] not in {"codex", "zcode"}:
+            raise ValueError("worker_harness must be 'codex' or 'zcode'")
         if "worker_env_allowlist" in runner:
             values = runner["worker_env_allowlist"]
             if not isinstance(values, list):

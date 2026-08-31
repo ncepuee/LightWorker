@@ -65,6 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--profile", help="Configured worker profile")
     submit.add_argument("--gateway", help="Configured gateway name")
     submit.add_argument(
+        "--harness",
+        choices=["codex", "zcode"],
+        help="Worker harness (defaults to [runner] worker_harness, currently codex)",
+    )
+    submit.add_argument(
         "--execution-channel",
         choices=["lightworker_worker", "native_subagent"],
         default="lightworker_worker",
@@ -223,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
                     "objective": args.objective,
                     "workspace": args.workspace,
                     "kind": args.kind,
+                    "harness": args.harness,
                     "profile": args.profile,
                     "model": args.model,
                     "gateway": args.gateway,

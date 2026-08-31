@@ -65,6 +65,7 @@ TOOLS: list[dict[str, Any]] = [
                 "model": {"type": "string"},
                 "profile": {"type": "string"},
                 "gateway": {"type": "string"},
+                "harness": {"type": "string", "enum": ["codex", "zcode"]},
                 "execution_channel": {
                     "type": "string",
                     "enum": ["lightworker_worker", "native_subagent"],
