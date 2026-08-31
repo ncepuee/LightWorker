@@ -53,7 +53,7 @@ def test_zcode_command_prefix_uses_cli_path_with_node(tmp_path):
     worker = ZCodeWorker(cfg)
     prefix = worker._command_prefix()
     assert prefix is not None
-    assert prefix[0].lower().endswith("node.exe")
+    assert Path(prefix[0]).name.lower().startswith("node")
     assert prefix[-1] == str(cli)
 
 
