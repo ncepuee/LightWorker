@@ -12,7 +12,7 @@ from .approval import stamp_approval
 from .cache import configure_task_cache
 from .config import Config
 from .instance_lock import InstanceLock
-from .models import RunResult, TaskSpec
+from .models import KNOWN_HARNESSES, RunResult, TaskSpec
 from .policy import PolicyError, topological_order, validate_plan, validate_task
 from .store import TaskStore
 from .worker import CodexWorker, build_worker
@@ -220,7 +220,10 @@ class Scheduler:
             if spec.execution_channel == "native_subagent":
                 self.store.stage_native_dispatch(task_id)
                 return
-            if not spec.gateway:
+            # Legacy tasks (pre-gateway era) get their route migrated once; a
+            # gateway-less spec is otherwise reserved for the ZCode harness,
+            # whose provider and plan are managed entirely by the ZCode CLI.
+            if not spec.gateway and spec.harness != "zcode":
                 route = self.cfg.resolve_route(
                     spec.reasoning_effort,
                     spec.model,
@@ -342,6 +345,12 @@ class Scheduler:
             kind = str(item.get("kind", "explore"))
             requested_effort = str(item["reasoning_effort"]) if item.get("reasoning_effort") else None
             profile = str(item["profile"]) if item.get("profile") else None
+            harness = str(item.get("harness") or self.cfg.worker_harness or "codex")
+            if harness not in KNOWN_HARNESSES:
+                raise PolicyError(f"Invalid planned task {name!r}: unknown harness {harness!r}")
+            execution_channel = str(item.get("execution_channel", "lightworker_worker"))
+            if harness == "zcode" and execution_channel == "native_subagent":
+                raise PolicyError(f"Invalid planned task {name!r}: native_subagent channel requires the codex harness")
             try:
                 selected = self.cfg.resolve_profile(
                     profile,
@@ -352,7 +361,6 @@ class Scheduler:
             except ValueError as exc:
                 raise PolicyError(f"Invalid planned task {name!r}: {exc}") from exc
             reasoning_effort = selected.reasoning_effort
-            execution_channel = str(item.get("execution_channel", "lightworker_worker"))
             raw_capabilities = item.get("required_capabilities", [])
             if not isinstance(raw_capabilities, list):
                 raise PolicyError(f"Invalid planned task {name!r}: required_capabilities must be an array")
@@ -360,12 +368,17 @@ class Scheduler:
             if execution_channel == "native_subagent" and "native_subagents" not in required_capabilities:
                 required_capabilities.append("native_subagents")
             try:
-                route = self.cfg.resolve_route(
-                    reasoning_effort,
-                    selected.model,
-                    selected.gateway,
-                    required_capabilities=required_capabilities,
-                )
+                if harness == "zcode":
+                    # ZCode signs in with its own provider and plan; gateway
+                    # resolution and catalogs never apply to its children.
+                    route = self.cfg.resolve_zcode_route(required_capabilities=required_capabilities)
+                else:
+                    route = self.cfg.resolve_route(
+                        reasoning_effort,
+                        selected.model,
+                        selected.gateway,
+                        required_capabilities=required_capabilities,
+                    )
             except ValueError as exc:
                 raise PolicyError(f"Invalid planned task {name!r}: {exc}") from exc
             status = "queued"
@@ -377,6 +390,7 @@ class Scheduler:
                 parent_id=planner_id,
                 name=name,
                 kind=kind,
+                harness=harness,
                 objective=str(item["objective"]),
                 workspace=planner.workspace,
                 model=route.model,
@@ -384,7 +398,7 @@ class Scheduler:
                 requested_model=str(item["model"]) if item.get("model") else None,
                 requested_gateway=None,
                 requested_reasoning_effort=requested_effort,
-                gateway=route.gateway,
+                gateway=route.gateway if harness != "zcode" else None,
                 upstream_model=route.upstream_model,
                 response_mode=route.response_mode,
                 fallback_gateway=route.fallback_gateway,

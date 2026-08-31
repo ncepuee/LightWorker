@@ -18,6 +18,10 @@
             "type": "string",
             "enum": ["explore", "execute", "review"]
           },
+          "harness": {
+            "type": "string",
+            "enum": ["codex", "zcode"]
+          },
           "objective": { "type": "string" },
           "dependencies": {
             "type": "array",

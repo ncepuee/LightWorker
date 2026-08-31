@@ -30,7 +30,8 @@ default_gateway = "opencodex"
 # Default worker harness: codex or zcode
 # worker_harness = "codex"
 # zcode_command = "zcode"
-# zcode_cli_path = "D:\ZCode\resources\glm\zcode.cjs"
+# Windows paths must use single quotes (literal string) or escaped backslashes.
+# zcode_cli_path = 'D:\ZCode\resources\glm\zcode.cjs'
 
 # Allow worker sandbox network access (gh / git push) while keeping workspace-write file limits
 codex_sandbox_network_access = false

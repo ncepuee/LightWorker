@@ -957,6 +957,7 @@ class ZCodeWorker:
         started = time.monotonic()
         result_text: str | None = None
         last_agent_message: str | None = None
+        stdout_lines: list[str] = []
         cancelled = False
         timed_out = False
         while process.poll() is None or any(thread.is_alive() for thread in threads) or not output.empty():
@@ -973,13 +974,12 @@ class ZCodeWorker:
             if not line:
                 continue
             if source == "stdout":
+                stdout_lines.append(line)
                 try:
                     event = redact_value(json.loads(line))
                 except json.JSONDecodeError:
-                    emit("worker.stdout", {"text": redact_text(line)})
                     continue
                 if not isinstance(event, dict):
-                    emit("worker.stdout", {"text": redact_text(line)})
                     continue
                 event_type = str(event.get("type", "worker.event"))
                 emit(event_type, event)
@@ -991,6 +991,15 @@ class ZCodeWorker:
             else:
                 emit("worker.stderr", {"text": redact_text(line)})
         exit_code = process.wait()
+        if result_text is None:
+            # ZCode --json prints one pretty-printed JSON document (not NDJSON).
+            # Fall back to whole-document parsing and read its terminal fields.
+            document = _parse_zcode_document("\n".join(stdout_lines))
+            if document is not None:
+                if isinstance(document.get("response"), str):
+                    result_text = str(document["response"])
+                elif isinstance(document.get("result"), str):
+                    result_text = str(document["result"])
         raw = result_text or last_agent_message or ""
         safe_raw = redact_text(raw)
         if raw_path:
@@ -1037,6 +1046,30 @@ class ZCodeWorker:
             exit_code=exit_code,
             result_path=str(result_path),
         )
+
+
+def _parse_zcode_document(text: str) -> dict[str, Any] | None:
+    """Parse ZCode's pretty-printed whole-document ``--json`` output.
+
+    Returns the parsed object, or ``None`` when the stream holds no complete
+    JSON object. Attempts the full text first, then the outermost brace span,
+    tolerating stray non-JSON lines around the document.
+    """
+    candidates = [text.strip()]
+    first = text.find("{")
+    last = text.rfind("}")
+    if first != -1 and last > first:
+        candidates.append(text[first : last + 1])
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return redact_value(parsed)
+    return None
 
 
 def _zcode_environment(cfg: Config) -> dict[str, str]:

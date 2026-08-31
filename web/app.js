@@ -49,6 +49,8 @@ const I18N = {
     'sys.colModel': '模型', 'sys.colProvider': '提供方', 'sys.colBilling': '计费', 'sys.colPrimary': '主网关', 'sys.colFallback': '备用', 'sys.colRoutable': '可路由',
     'sys.colProfile': 'Profile', 'sys.colDesc': '用途', 'sys.colEffort': '强度', 'sys.colGateway': '网关',
     'sys.home': '状态目录', 'sys.database': '状态库', 'sys.codex': 'Codex CLI', 'sys.scheduler': '调度器',
+    'sys.zcode': 'ZCode CLI', 'sys.defaultHarness': '默认执行端', 'sys.zcodeProvider': 'ZCode Provider 套餐',
+    'sys.zcodeModels': '模型 {n}', 'sys.zcodeNoConfig': '未读取到 ZCode 配置',
     'sys.concurrency': '全局并发', 'sys.isolated': '隔离用户配置', 'sys.catalog': '模型目录',
     'sys.maxSub': '单根并发', 'sys.maxAttempts': '尝试上限', 'sys.maxRetries': '备用重试', 'sys.maxEscalations': '深度升级',
     'sys.cacheAffinity': '缓存亲和', 'sys.cacheWindow': '亲和窗口', 'sys.cacheWarm': '暖样本窗口', 'sys.cacheTarget': '目标命中率', 'sys.cacheMin': '最少暖样本',
@@ -71,7 +73,10 @@ const I18N = {
     'meta.verified': '核验', 'meta.fallback': '备用', 'meta.profile': 'Profile',
     'action.approve': '批准当前权限范围', 'action.cancel': '取消任务', 'action.fallback': '改用 {gw} 重试', 'action.escalate': '升级到深度 Worker',
     'gw.connected': '已连接', 'gw.disconnected': '未连接', 'gw.absent': '未配置', 'gw.online': '在线', 'gw.offline': '离线',
-    'gw.needGateway': '至少一个网关连接成功才能委派任务', 'protocol.native': 'Native Responses', 'protocol.translated': 'Responses → Chat 转译',
+    'gw.needGateway': '至少一个网关连接成功才能委派 Codex 任务',
+    'gw.needHarness': '需要 Codex（网关在线）或 ZCode 可用，才能委派任务',
+    'gw.needZcode': 'ZCode CLI 不可用，无法提交 ZCode 任务',
+    'gw.needCodexForTask': 'Codex 或网关不可用，无法提交 Codex 任务', 'protocol.native': 'Native Responses', 'protocol.translated': 'Responses → Chat 转译',
     'opt.autoRoute': '按 Profile / 自动路由', 'opt.noProfile': '不指定 Profile', 'opt.autoGateway': '按模型自动选择（推荐）', 'opt.notRoutable': ' · 当前不可路由',
     'palette.ph': '搜索任务或命令…', 'palette.actions': '命令', 'palette.tasks': '任务', 'palette.noResult': '没有匹配的结果', 'palette.newTask': '新建任务', 'palette.goto': '跳转到{view}',
     'toast.refreshed': '任务状态已刷新', 'toast.needObjective': '请填写目标和工作区', 'toast.orchQueued': '规划任务已入队：{id}',
@@ -122,6 +127,8 @@ const I18N = {
     'sys.colModel': 'Model', 'sys.colProvider': 'Provider', 'sys.colBilling': 'Billing', 'sys.colPrimary': 'Primary', 'sys.colFallback': 'Fallback', 'sys.colRoutable': 'Routable',
     'sys.colProfile': 'Profile', 'sys.colDesc': 'Purpose', 'sys.colEffort': 'Effort', 'sys.colGateway': 'Gateway',
     'sys.home': 'State home', 'sys.database': 'State store', 'sys.codex': 'Codex CLI', 'sys.scheduler': 'Scheduler',
+    'sys.zcode': 'ZCode CLI', 'sys.defaultHarness': 'Default harness', 'sys.zcodeProvider': 'ZCode provider plan',
+    'sys.zcodeModels': 'models {n}', 'sys.zcodeNoConfig': 'ZCode config not found',
     'sys.concurrency': 'Global concurrency', 'sys.isolated': 'Isolated user config', 'sys.catalog': 'Model catalog',
     'sys.maxSub': 'Root concurrency', 'sys.maxAttempts': 'Max attempts', 'sys.maxRetries': 'Fallback retries', 'sys.maxEscalations': 'Escalations',
     'sys.cacheAffinity': 'Cache affinity', 'sys.cacheWindow': 'Affinity window', 'sys.cacheWarm': 'Warm window', 'sys.cacheTarget': 'Target rate', 'sys.cacheMin': 'Min warm samples',
@@ -145,7 +152,10 @@ const I18N = {
     'meta.verified': 'Verified', 'meta.fallback': 'Fallback', 'meta.profile': 'Profile',
     'action.approve': 'Approve current scope', 'action.cancel': 'Cancel task', 'action.fallback': 'Retry via {gw}', 'action.escalate': 'Escalate to deep Worker',
     'gw.connected': 'Connected', 'gw.disconnected': 'Disconnected', 'gw.absent': 'Not configured', 'gw.online': 'Online', 'gw.offline': 'Offline',
-    'gw.needGateway': 'At least one gateway must be connected to delegate tasks', 'protocol.native': 'Native Responses', 'protocol.translated': 'Responses → Chat translated',
+    'gw.needGateway': 'At least one gateway must be connected to delegate Codex tasks',
+    'gw.needHarness': 'Either Codex (with a gateway online) or ZCode must be available to delegate tasks',
+    'gw.needZcode': 'ZCode CLI is unavailable; cannot submit ZCode tasks',
+    'gw.needCodexForTask': 'Codex or gateway unavailable; cannot submit Codex tasks', 'protocol.native': 'Native Responses', 'protocol.translated': 'Responses → Chat translated',
     'opt.autoRoute': 'By Profile / auto route', 'opt.noProfile': 'No profile', 'opt.autoGateway': 'Auto by model (recommended)', 'opt.notRoutable': ' · not routable',
     'palette.ph': 'Search tasks or commands…', 'palette.actions': 'Commands', 'palette.tasks': 'Tasks', 'palette.noResult': 'No matches', 'palette.newTask': 'New task', 'palette.goto': 'Go to {view}',
     'toast.refreshed': 'Task state refreshed', 'toast.needObjective': 'Please fill in objective and workspace', 'toast.orchQueued': 'Plan task queued: {id}',
@@ -291,6 +301,8 @@ function updateMetrics() {
 
 /* ================= health chips ================= */
 function gwOk(g) { return Boolean(g && g.enabled && g.api_reachable && g.credential_configured); }
+function codexOk() { return Boolean(state.doctor?.codex_path) && (state.doctor?.gateways || []).some((g) => gwOk(g)); }
+function zcodeOk() { return Boolean(state.doctor?.zcode_available); }
 function updateHealth() {
   const gateways = state.doctor?.gateways || [];
   for (const [mini, name, label] of [['#gw-mini-opencodex', 'opencodex', 'OpenCodex'], ['#gw-mini-cliproxyapi', 'cliproxyapi', 'CLIProxyAPI']]) {
@@ -307,10 +319,11 @@ function updateHealth() {
   schedulerCard.classList.toggle('is-active', active);
   $('#scheduler-role').textContent = active ? t('health.schedulerActive') : t('health.schedulerIdle');
   $('#scheduler-sync').textContent = state.lastSync ? `${t('top.refresh')} · ${relTime(state.lastSync)}` : t('top.waiting');
-  const canDelegate = Boolean(state.doctor?.codex_path) && gateways.some((g) => gwOk(g));
+  const canDelegate = codexOk() || zcodeOk();
   const newBtn = $('#new-task-button');
   newBtn.disabled = !canDelegate;
-  newBtn.title = canDelegate ? '' : t('gw.needGateway');
+  newBtn.title = canDelegate ? '' : t('gw.needHarness');
+  if (typeof syncHarnessFields === 'function') syncHarnessFields();
 }
 
 /* ================= overview ================= */
@@ -484,12 +497,30 @@ function def(label, value, mono = false) {
 function boolSpan(value, yesText, noText) {
   return `<span class="${value ? 'bool-ok' : 'bool-bad'}">${value ? escapeHtml(yesText) : escapeHtml(noText)}</span>`;
 }
+function zcodeProviderCell(provider) {
+  if (!provider) return `<span class="bool-bad">${t('sys.zcodeNoConfig')}</span>`;
+  const p = provider.provider;
+  const lines = [];
+  if (p) {
+    lines.push(`<b>${escapeHtml(p.name || p.id || 'provider')}</b>`);
+    if (p.base_url) lines.push(`<span class="mono">${escapeHtml(p.base_url)}</span>`);
+    if (p.models && p.models.length) lines.push(`<small>${escapeHtml(t('sys.zcodeModels', { n: p.models.length }))}</small>`);
+    lines.push(boolSpan(Boolean(p.api_key_configured), t('sys.yes'), t('sys.no')));
+  } else {
+    lines.push(`<small>${escapeHtml(provider.main_model || '—')}</small>`);
+  }
+  if (provider.main_model) lines.push(`<small>main: ${escapeHtml(provider.main_model)}${provider.lite_model ? ` · lite: ${escapeHtml(provider.lite_model)}` : ''}</small>`);
+  return lines.join('<br>');
+}
 function renderSystem() {
   const d = state.doctor;
   if (!d) return;
   $('#sys-runtime').innerHTML =
     def(t('sys.scheduler'), `<span class="${d.scheduler_role === 'active' ? 'routable-yes' : ''}">${escapeHtml(d.scheduler_role || '—')}</span>`) +
     def(t('sys.codex'), d.codex_path ? `${escapeHtml(d.codex_version || '')}<br><span class="mono">${escapeHtml(d.codex_path)}</span>` : `<span class="bool-bad">${t('sys.no')}</span>`) +
+    def(t('sys.zcode'), d.zcode_available ? `${t('sys.yes')}<br><span class="mono">${escapeHtml(d.zcode_path || '')}</span>` : `<span class="bool-bad">${t('sys.no')}</span>`) +
+    def(t('sys.defaultHarness'), escapeHtml(d.worker_harness || '—')) +
+    def(t('sys.zcodeProvider'), zcodeProviderCell(d.zcode_provider)) +
     def(t('sys.home'), escapeHtml(d.home || '—'), true) +
     def(t('sys.database'), escapeHtml(d.database || '—'), true) +
     def(t('sys.concurrency'), `${d.max_concurrency ?? '—'}`) +
@@ -731,6 +762,10 @@ async function submitSingle() {
     context_pack: $('#single-context-pack').value || null,
   };
   if (!payload.objective || !payload.workspace) return toast(t('toast.needObjective'), true);
+  if (payload.harness === 'zcode') {
+    if (payload.gateway) payload.gateway = null;
+    if (!zcodeOk()) return toast(t('gw.needZcode'), true);
+  } else if (!codexOk()) return toast(t('gw.needCodexForTask'), true);
   try {
     const result = await api('/api/tasks', { method: 'POST', body: JSON.stringify(payload) });
     $('#task-dialog').close();
@@ -801,17 +836,25 @@ $$('.dtab').forEach((button) => button.addEventListener('click', () => {
   $$('.dpane').forEach((pane) => pane.hidden = pane.dataset.dpane !== button.dataset.dtab);
 }));
 $('#search-input').addEventListener('input', (event) => { state.search = event.target.value; renderTasks(); });
-$('#single-harness').addEventListener('change', () => {
+function syncHarnessFields() {
+  const zcode = $('#single-harness').value === 'zcode';
   const nativeOption = $('#single-channel').querySelector('option[value="native_subagent"]');
-  if ($('#single-harness').value === 'zcode') {
+  if (zcode) {
     $('#single-channel').value = 'lightworker_worker';
     nativeOption.disabled = true;
   } else {
     nativeOption.disabled = false;
   }
-});
+  $('#single-gateway').disabled = zcode;
+  const submit = $('#submit-single');
+  const ok = zcode ? zcodeOk() : codexOk();
+  submit.disabled = !ok;
+  submit.title = ok ? '' : t(zcode ? 'gw.needZcode' : 'gw.needCodexForTask');
+}
+$('#single-harness').addEventListener('change', syncHarnessFields);
 $('#single-channel').addEventListener('change', () => {
   if ($('#single-channel').value === 'native_subagent') $('#single-harness').value = 'codex';
+  syncHarnessFields();
 });
 $('#new-task-button').addEventListener('click', () => $('#task-dialog').showModal());
 $('#refresh-button').addEventListener('click', () => refresh());

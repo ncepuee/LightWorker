@@ -195,12 +195,17 @@ def configure_task_cache(cfg: Any, spec: Any, context_pack: object = ...) -> Non
     profile = cfg.worker_profiles.get(spec.profile) if spec.profile else None
     contract = profile.description if profile else str(spec.metadata.get("profile_description") or "legacy")
     contract_hash = sha256_text(canonical_lf(contract).strip())
-    gateway_config = cfg.gateway_config(str(spec.gateway or "legacy"))
+    if getattr(spec, "harness", None) == "zcode":
+        # ZCode manages its own endpoint, catalog, and plan; no gateway config
+        # applies to its cache cohort.
+        gateway_config = None
+    else:
+        gateway_config = cfg.gateway_config(str(spec.gateway or "legacy"))
     config_scope = {
         "declared": cfg.cache_config_scope,
         "isolated_user_config": bool(cfg.codex_ignore_user_config),
-        "gateway_endpoint": gateway_config.base_url,
-        "model_catalog": gateway_config.model_catalog,
+        "gateway_endpoint": gateway_config.base_url if gateway_config else None,
+        "model_catalog": gateway_config.model_catalog if gateway_config else None,
         "catalog_revision": spec.catalog_revision,
     }
     spec.cache_cohort = cache_cohort_v2(
