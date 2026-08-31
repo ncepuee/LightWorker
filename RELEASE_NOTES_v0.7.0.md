@@ -7,7 +7,7 @@ LightWorker 0.7.0 introduces a native Dual Worker Harness architecture, adding f
 ### Added
 
 - **Dual Worker Harness (`ZCodeWorker` + `CodexWorker`)**: Unified worker abstraction executing tasks natively via either `codex exec` or `node zcode.cjs`.
-- **Zero-Config Windows Path Auto-Detection**: Automatically detects standard ZCode installation paths (`D:\ZCode\resources\glm\zcode.cjs`, `C:\Program Files`, `AppData`).
+- **Zero-Config Windows Path Auto-Detection**: Automatically detects standard ZCode installation paths (`%ProgramFiles%`, `%LOCALAPPDATA%`, or custom installation directories).
 - **Dynamic Task Routing**: `build_worker(cfg, spec)` dynamically instantiates the appropriate runner according to the task's declared `harness` parameter (`codex` or `zcode`).
 - **Safety Mode Mapping**: Maps `workspace-write` + `execute` tasks safely to ZCode `--mode edit` and read-only tasks to `--mode plan` (strictly refusing destructive `yolo` mode).
 - **Web UI & Doctor Diagnostic Support**: System view and `/api/doctor` endpoint detect and report ZCode binary availability and dual-harness execution readiness.
@@ -21,7 +21,7 @@ LightWorker 0.7.0 introduces a native Dual Worker Harness architecture, adding f
 ## Verified end-to-end
 
 - Dual harness unit and integration test suite: 105 tests passed across Python 3.11, 3.12, and 3.13.
-- Windows auto-discovery verified against `D:\ZCode\resources\glm\zcode.cjs`.
+- Windows auto-discovery verified against standard installation paths.
 - Full CI matrix green across `windows-latest`, `ubuntu-latest`, and `macos-latest`.
 - Zero third-party runtime dependencies maintained.
 

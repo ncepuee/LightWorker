@@ -40,7 +40,7 @@ LightWorker is a lightweight, local-first multi-agent task runner with no third-
 | Capability | What it does |
 |---|---|
 | Dual Worker Harness | Native execution for both OpenAI Codex (`CodexWorker`) and ZCode / GLM CLI (`ZCodeWorker`) with dynamic routing |
-| Windows ZCode Auto-Detection | Zero-config discovery for standard ZCode installation paths (`D:\ZCode\resources\glm\zcode.cjs`, `Program Files`, `AppData`) |
+| Windows ZCode Auto-Detection | Zero-config discovery for standard ZCode installation paths (`%ProgramFiles%`, `%LOCALAPPDATA%`, or custom installation directories) |
 | Persistent task DAG | SQLite WAL stores tasks, dependencies, events, PIDs, results, and worktree information |
 | Codex-native bridge | Durable native dispatch tickets, lease protection, native thread IDs, and host callbacks for `spawn_agent` / wait results |
 | Automatic decomposition and parallelism | Lead Codex generates a directed acyclic task graph; independent read-only Workers can run in parallel |
@@ -74,7 +74,7 @@ See [SECURITY.md](SECURITY.md) for the full threat model and how to report vulne
 - A working Codex / ZCode login or a configured model gateway
 - CLIProxyAPI/OpenCodex Proxy on the current machine (when using non-OpenAI models)
 
-The local development verification environment is Python 3.13, Git 2.51, Codex CLI 0.146.0, ZCode CLI, and SQLite 3.51.
+The local development verification environment is Python 3.13, Git 2.51, Codex CLI, ZCode CLI, and SQLite 3.51.
 
 ## Installation
 
@@ -124,7 +124,7 @@ Submit a read-only DeepSeek V4 Flash investigation:
 
 ```powershell
 lightworker submit `
-  --workspace "C:\path\to\project" `
+  --workspace "/path/to/project" `
   --kind explore `
   --model "deepseek/deepseek-v4-flash" `
   --run `
@@ -135,7 +135,7 @@ Let Lead Codex decompose the task automatically:
 
 ```powershell
 lightworker orchestrate `
-  --workspace "C:\path\to\project" `
+  --workspace "/path/to/project" `
   --mode auto_readonly `
   --run `
   "Find the cause of intermittent HTTP 500 errors in the login endpoint and provide an evidence-backed remediation plan."
