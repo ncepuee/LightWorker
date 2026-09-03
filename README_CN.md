@@ -35,7 +35,7 @@ LightWorker 是一个本地优先、零运行时依赖的轻量多 Agent Worker 
 正式版 `0.7.1` 加固原生 **Dual Worker Harness** 架构，并继承 `0.6.0` 的原生 Subagent Bridge 能力：
 
 - **Dual Worker Harness (`ZCodeWorker` + `CodexWorker`)**：根据任务的 `harness` 字段动态路由原生执行 `node zcode.cjs` 或 `codex exec`。
-- **Windows ZCode 零配置自动探测**：自动识别标准路径（如系统标准应用路径、`%ProgramFiles%` 及 `%LOCALAPPDATA%`）。
+- **ZCode 零配置自动探测**：自动识别标准安装路径——Windows 的系统标准应用路径、`%ProgramFiles%` 及 `%LOCALAPPDATA%`，macOS 的 `/Applications/ZCode.app` 与 `~/Applications/ZCode.app`（CLI 入口为应用包内 `Contents/Resources/glm/zcode.cjs`）。
 - **安全模式对齐**：写任务严格映射至 `--mode edit`，只读任务映射至 `--mode plan`，严格拒绝破坏性 `yolo` 模式。
 - Lead Codex 自动生成依赖任务图。
 - Explorer、Executor、Reviewer 采用明确角色和结构化结果。
