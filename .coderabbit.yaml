@@ -41,8 +41,3 @@ reviews:
     - "!**/*.lock"         # 排除锁文件
     - "!SHA256SUMS*.txt"   # 排除校验和文件
     - "!*.ps1"             # 排除 PowerShell 启动脚本
-
-# ===== 自动标签 =====
-labels:
-  enabled: true
-  review_label: "coderabbit:reviewed"
