@@ -29,20 +29,18 @@ reviews:
     security:
       enabled: true        # 开启安全漏洞扫描
 
-  # 路径过滤：只评审核心代码
+  # 路径过滤：字符串数组格式，! 前缀表示排除
   path_filters:
-    include:
-      - "lightworker/**"   # Python 核心代码
-      - "web/**"           # 前端 Web 界面
-      - "tests/**"         # 测试代码
-      - "schemas/**"       # JSON Schema 定义
-    exclude:
-      - "**/*.md"          # 所有 Markdown 文档
-      - "docs/**"          # 文档目录
-      - ".github/**"       # CI/Workflow 配置
-      - "**/*.lock"        # 锁文件
-      - "SHA256SUMS*.txt"  # 校验和文件
-      - "*.ps1"            # PowerShell 启动脚本
+    - "lightworker/**"     # Python 核心代码
+    - "web/**"             # 前端 Web 界面
+    - "tests/**"           # 测试代码
+    - "schemas/**"         # JSON Schema 定义
+    - "!**/*.md"           # 排除所有 Markdown 文档
+    - "!docs/**"           # 排除文档目录
+    - "!.github/**"        # 排除 CI/Workflow 配置
+    - "!**/*.lock"         # 排除锁文件
+    - "!SHA256SUMS*.txt"   # 排除校验和文件
+    - "!*.ps1"             # 排除 PowerShell 启动脚本
 
 # ===== 自动标签 =====
 labels:
