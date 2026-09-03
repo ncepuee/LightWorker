@@ -1,43 +1,44 @@
-# CodeRabbit 配置文件 - LightWorker 项目
-# 官方文档: https://docs.coderabbit.ai/configuration
-# 配置随仓库版本化，所有贡献者共用同一套评审规则
+# CodeRabbit Configuration - LightWorker Project
+# Official Docs: https://docs.coderabbit.ai/configuration
+# Configuration is version-controlled with the repository,
+# so all contributors share the same review rules.
 
-# ===== 全局基础设置 =====
-language: "zh-CN"          # 评审输出语言：中文
-early_access: false        # 不启用内测功能
+# ===== Global Settings =====
+language: "en"             # Review output language: English
+early_access: false        # Disable early access features
 
-# ===== 评审核心设置 =====
+# ===== Core Review Settings =====
 reviews:
-  profile: "assertive"     # 评审风格：assertive(严格) / chill(宽松)
-  high_level_summary: true # 生成 PR 整体变更摘要
-  review_status: true      # 在 PR 上显示评审状态标签
-  sequence_diagrams: true  # 复杂变更时生成代码调用时序图
+  profile: "assertive"     # Review profile: assertive (strict) / chill (relaxed)
+  high_level_summary: true # Generate high-level PR change summary
+  review_status: true      # Show review status label on PR
+  sequence_diagrams: true  # Generate code call sequence diagrams for complex changes
 
-  # 自动评审触发规则
+  # Auto-review trigger rules
   auto_review:
-    enabled: true          # 新 PR 自动触发评审
-    drafts: false          # 不评审草稿 PR
+    enabled: true          # Auto-trigger review on new PRs
+    drafts: false          # Skip draft PRs
     base_branches:
       - main
-    ignore_title_keywords:  # 标题含以下关键词跳过评审
+    ignore_title_keywords:  # Skip PRs with these keywords in title
       - "WIP"
       - "DO NOT MERGE"
       - "chore(deps)"
 
-  # 安全与质量检查
+  # Security & quality checks
   tools:
     security:
-      enabled: true        # 开启安全漏洞扫描
+      enabled: true        # Enable security vulnerability scanning
 
-  # 路径过滤：字符串数组格式，! 前缀表示排除
+  # Path filters: string array format, ! prefix means exclude
   path_filters:
-    - "lightworker/**"     # Python 核心代码
-    - "web/**"             # 前端 Web 界面
-    - "tests/**"           # 测试代码
-    - "schemas/**"         # JSON Schema 定义
-    - "!**/*.md"           # 排除所有 Markdown 文档
-    - "!docs/**"           # 排除文档目录
-    - "!.github/**"        # 排除 CI/Workflow 配置
-    - "!**/*.lock"         # 排除锁文件
-    - "!SHA256SUMS*.txt"   # 排除校验和文件
-    - "!*.ps1"             # 排除 PowerShell 启动脚本
+    - "lightworker/**"     # Python core code
+    - "web/**"             # Frontend web interface
+    - "tests/**"           # Test code
+    - "schemas/**"         # JSON Schema definitions
+    - "!**/*.md"           # Exclude all Markdown docs
+    - "!docs/**"           # Exclude docs directory
+    - "!.github/**"        # Exclude CI/Workflow configs
+    - "!**/*.lock"         # Exclude lock files
+    - "!SHA256SUMS*.txt"   # Exclude checksum files
+    - "!*.ps1"             # Exclude PowerShell startup scripts
