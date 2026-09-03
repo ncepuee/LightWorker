@@ -1,0 +1,50 @@
+# CodeRabbit 配置文件 - LightWorker 项目
+# 官方文档: https://docs.coderabbit.ai/configuration
+# 配置随仓库版本化，所有贡献者共用同一套评审规则
+
+# ===== 全局基础设置 =====
+language: "zh-CN"          # 评审输出语言：中文
+early_access: false        # 不启用内测功能
+
+# ===== 评审核心设置 =====
+reviews:
+  profile: "assertive"     # 评审风格：assertive(严格) / chill(宽松)
+  high_level_summary: true # 生成 PR 整体变更摘要
+  review_status: true      # 在 PR 上显示评审状态标签
+  sequence_diagrams: true  # 复杂变更时生成代码调用时序图
+
+  # 自动评审触发规则
+  auto_review:
+    enabled: true          # 新 PR 自动触发评审
+    drafts: false          # 不评审草稿 PR
+    base_branches:
+      - main
+    ignore_title_keywords:  # 标题含以下关键词跳过评审
+      - "WIP"
+      - "DO NOT MERGE"
+      - "chore(deps)"
+
+  # 安全与质量检查
+  tools:
+    security:
+      enabled: true        # 开启安全漏洞扫描
+
+  # 路径过滤：只评审核心代码
+  path_filters:
+    include:
+      - "lightworker/**"   # Python 核心代码
+      - "web/**"           # 前端 Web 界面
+      - "tests/**"         # 测试代码
+      - "schemas/**"       # JSON Schema 定义
+    exclude:
+      - "**/*.md"          # 所有 Markdown 文档
+      - "docs/**"          # 文档目录
+      - ".github/**"       # CI/Workflow 配置
+      - "**/*.lock"        # 锁文件
+      - "SHA256SUMS*.txt"  # 校验和文件
+      - "*.ps1"            # PowerShell 启动脚本
+
+# ===== 自动标签 =====
+labels:
+  enabled: true
+  review_label: "coderabbit:reviewed"
