@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- macOS 现在同样零配置自动探测 ZCode 安装路径（Issue #7）：`find_default_zcode_cli_path()` 此前仅覆盖 Windows，导致已安装 `/Applications/ZCode.app`（或 `~/Applications/ZCode.app`，CLI 入口 `Contents/Resources/glm/zcode.cjs`）的 macOS 设备上 `doctor` 报告 `zcode_path: null`、`zcode_available: false`，提交 `--harness zcode` 任务失败 `ZCode command not found: zcode`。Windows 检测行为保持不变。
+- README / README_CN 的 macOS/Linux `LIGHTWORKER_HOME` 示例与 `default_home()` 实际默认值对齐（`XDG_DATA_HOME`，即 `~/.local/share/lightworker`，此前误写为 `XDG_STATE_HOME`/`~/.local/state`）。
+
 ## 0.7.1 - 2026-08-31
 
 ### Fixed
