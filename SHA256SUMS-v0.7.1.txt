@@ -1,0 +1,2 @@
+832a1634695d970ece0f0ea4df1edceaced9f171e43cc5b3f282066b5d6796fc  dist/lightworker-0.7.1.tar.gz
+3ce7e749bb75b6c7f48f31f30527b3084756939a43be28f83dcd4ed91a0908d1  dist/lightworker-0.7.1-py3-none-any.whl
