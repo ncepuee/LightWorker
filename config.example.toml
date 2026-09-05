@@ -30,6 +30,9 @@ default_gateway = "opencodex"
 # Default worker harness: codex or zcode
 # worker_harness = "codex"
 # zcode_command = "zcode"
+# Usually unnecessary: standard install paths are auto-detected on Windows
+# (e.g. D:\ZCode\resources\glm\zcode.cjs) and macOS
+# (/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs).
 # Windows paths must use single quotes (literal string) or escaped backslashes.
 # zcode_cli_path = 'D:\ZCode\resources\glm\zcode.cjs'
 

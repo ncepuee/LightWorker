@@ -1,0 +1,44 @@
+# CodeRabbit Configuration - LightWorker Project
+# Official Docs: https://docs.coderabbit.ai/configuration
+# Configuration is version-controlled with the repository,
+# so all contributors share the same review rules.
+
+# ===== Global Settings =====
+language: "en"             # Review output language: English
+early_access: false        # Disable early access features
+
+# ===== Core Review Settings =====
+reviews:
+  profile: "assertive"     # Review profile: assertive (strict) / chill (relaxed)
+  high_level_summary: true # Generate high-level PR change summary
+  review_status: true      # Show review status label on PR
+  sequence_diagrams: true  # Generate code call sequence diagrams for complex changes
+
+  # Auto-review trigger rules
+  auto_review:
+    enabled: true          # Auto-trigger review on new PRs
+    drafts: false          # Skip draft PRs
+    base_branches:
+      - main
+    ignore_title_keywords:  # Skip PRs with these keywords in title
+      - "WIP"
+      - "DO NOT MERGE"
+      - "chore(deps)"
+
+  # Security & quality checks
+  tools:
+    security:
+      enabled: true        # Enable security vulnerability scanning
+
+  # Path filters: string array format, ! prefix means exclude
+  path_filters:
+    - "lightworker/**"     # Python core code
+    - "web/**"             # Frontend web interface
+    - "tests/**"           # Test code
+    - "schemas/**"         # JSON Schema definitions
+    - "!**/*.md"           # Exclude all Markdown docs
+    - "!docs/**"           # Exclude docs directory
+    - "!.github/**"        # Exclude CI/Workflow configs
+    - "!**/*.lock"         # Exclude lock files
+    - "!SHA256SUMS*.txt"   # Exclude checksum files
+    - "!*.ps1"             # Exclude PowerShell startup scripts

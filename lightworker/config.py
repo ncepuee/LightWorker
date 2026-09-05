@@ -240,9 +240,18 @@ def find_default_zcode_cli_path() -> str | None:
             Path(r"C:\Program Files (x86)\ZCode\resources\glm\zcode.cjs"),
             Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "ZCode" / "resources" / "glm" / "zcode.cjs",
         ]
-        for candidate in candidates:
-            if candidate.is_file():
-                return str(candidate)
+    elif sys.platform == "darwin":
+        # The macOS installer does not add a `zcode` executable to PATH; the
+        # CLI entry point ships inside the Electron app bundle.
+        candidates = [
+            Path("/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs"),
+            Path.home() / "Applications" / "ZCode.app" / "Contents" / "Resources" / "glm" / "zcode.cjs",
+        ]
+    else:
+        return None
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
     return None
 
 

@@ -40,7 +40,7 @@ LightWorker is a lightweight, local-first multi-agent task runner with no third-
 | Capability | What it does |
 |---|---|
 | Dual Worker Harness | Native execution for both OpenAI Codex (`CodexWorker`) and ZCode / GLM CLI (`ZCodeWorker`) with dynamic routing |
-| Windows ZCode Auto-Detection | Zero-config discovery for standard ZCode installation paths (`%ProgramFiles%`, `%LOCALAPPDATA%`, or custom installation directories) |
+| ZCode Auto-Detection | Zero-config discovery for standard ZCode installation paths: `%ProgramFiles%` / `%LOCALAPPDATA%` on Windows, `/Applications/ZCode.app` or `~/Applications/ZCode.app` on macOS |
 | Persistent task DAG | SQLite WAL stores tasks, dependencies, events, PIDs, results, and worktree information |
 | Codex-native bridge | Durable native dispatch tickets, lease protection, native thread IDs, and host callbacks for `spawn_agent` / wait results |
 | Automatic decomposition and parallelism | Lead Codex generates a directed acyclic task graph; independent read-only Workers can run in parallel |
@@ -107,7 +107,7 @@ lightworker doctor
 macOS / Linux:
 
 ```bash
-export LIGHTWORKER_HOME="${XDG_STATE_HOME:-$HOME/.local/state}/lightworker"
+export LIGHTWORKER_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/lightworker"
 lightworker init
 lightworker doctor
 ```

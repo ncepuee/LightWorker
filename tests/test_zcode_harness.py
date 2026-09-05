@@ -135,3 +135,73 @@ def test_zcode_worker_runs_fake_cli_pretty_document(tmp_path):
     assert result.status == "completed"
     assert result.result["summary"] == "done"
     assert result.result["harness"] == "zcode"
+
+
+# --- Issue #7: macOS ZCode installation auto-detection -----------------------
+
+
+def _patch_platform(monkeypatch, name: str) -> None:
+    import lightworker.config as config_module
+
+    monkeypatch.setattr(config_module.sys, "platform", name)
+
+
+def _stub_is_file(monkeypatch, existing: Path) -> None:
+    import pathlib
+
+    monkeypatch.setattr(pathlib.Path, "is_file", lambda self: self == existing)
+
+
+def test_find_default_zcode_cli_path_detects_macos_app_bundle(tmp_path, monkeypatch):
+    import lightworker.config as config_module
+    import pathlib
+
+    cli = tmp_path / "Applications" / "ZCode.app" / "Contents" / "Resources" / "glm" / "zcode.cjs"
+    cli.parent.mkdir(parents=True)
+    cli.write_text("// stub", encoding="utf-8")
+
+    _patch_platform(monkeypatch, "darwin")
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    # The system-wide /Applications candidate must not shadow the fixture.
+    _stub_is_file(monkeypatch, cli)
+
+    assert config_module.find_default_zcode_cli_path() == str(cli)
+
+
+def test_config_default_zcode_cli_path_follows_macos_detection(tmp_path, monkeypatch):
+    import pathlib
+
+    cli = tmp_path / "Applications" / "ZCode.app" / "Contents" / "Resources" / "glm" / "zcode.cjs"
+    cli.parent.mkdir(parents=True)
+    cli.write_text("// stub", encoding="utf-8")
+
+    _patch_platform(monkeypatch, "darwin")
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    _stub_is_file(monkeypatch, cli)
+
+    assert Config(home=tmp_path).zcode_cli_path == str(cli)
+
+
+def test_find_default_zcode_cli_path_returns_none_when_zcode_absent(tmp_path, monkeypatch):
+    import lightworker.config as config_module
+    import pathlib
+
+    _stub_is_file(monkeypatch, tmp_path / "nothing-here")
+    for platform_name in ("darwin", "linux", "win32"):
+        _patch_platform(monkeypatch, platform_name)
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "missing-localappdata"))
+        assert config_module.find_default_zcode_cli_path() is None
+
+
+def test_find_default_zcode_cli_path_windows_localappdata_unchanged(tmp_path, monkeypatch):
+    import lightworker.config as config_module
+
+    cli = tmp_path / "Programs" / "ZCode" / "resources" / "glm" / "zcode.cjs"
+    cli.parent.mkdir(parents=True)
+    cli.write_text("// stub", encoding="utf-8")
+
+    _patch_platform(monkeypatch, "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    _stub_is_file(monkeypatch, cli)
+
+    assert config_module.find_default_zcode_cli_path() == str(cli)
