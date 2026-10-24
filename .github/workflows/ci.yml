@@ -79,24 +79,24 @@ jobs:
       - name: Verify source-tree resources
         run: |
           set -euo pipefail
-          test -f web/index.html
-          test -f web/app.js
-          test -f web/styles.css
-          test -f web/logo.svg
-          test -f web/favicon.svg
-          test -f web/lightworker-app-icon.png
-          test -f schemas/plan.schema.json
-          test -f schemas/result.schema.json
+          test -f lightworker/web/index.html
+          test -f lightworker/web/app.js
+          test -f lightworker/web/styles.css
+          test -f lightworker/web/logo.svg
+          test -f lightworker/web/favicon.svg
+          test -f lightworker/web/lightworker-app-icon.png
+          test -f lightworker/schemas/plan.schema.json
+          test -f lightworker/schemas/result.schema.json
       - name: Verify installed CLI and version metadata
         run: |
           set -euo pipefail
-          # Since 0.4.0 the Web Console and schemas resolve from a source
-          # checkout (pip install -e .); installed wheel/sdist expose the
-          # CLI and MCP server, so only the CLI smoke and version metadata
-          # are asserted here.
+          # Since 0.8.0 the web console and schemas ship inside the wheel
+          # (lightworker/web, lightworker/schemas); assert their presence
+          # along with the CLI smoke and version metadata.
           .venv-wheeltest/bin/lightworker --help >/dev/null
           .venv-wheeltest/bin/python -I -m lightworker --help >/dev/null
           .venv-wheeltest/bin/python -I -c "import importlib.metadata as md, lightworker; assert lightworker.__version__ == md.version('lightworker')"
+          .venv-wheeltest/bin/python -I -c "import lightworker, pathlib; root = pathlib.Path(lightworker.__file__).parent; assert (root / 'web' / 'index.html').is_file() and (root / 'schemas' / 'result.schema.json').is_file(), 'wheel must ship web console and schemas'"
           .venv-sdisttest/bin/lightworker --help >/dev/null
           .venv-sdisttest/bin/python -I -c "import importlib.metadata as md, lightworker; assert lightworker.__version__ == md.version('lightworker')"
       - name: Upload distributions
