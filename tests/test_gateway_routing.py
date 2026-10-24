@@ -433,13 +433,16 @@ def test_all_workbuddy_models_route_through_opencodex(tmp_path: Path) -> None:
         assert task["required_capabilities"] == ["chat_to_responses"]
 
 
-def test_workbuddy_route_fails_closed_when_catalog_model_is_missing(tmp_path: Path) -> None:
+def test_workbuddy_route_fails_closed_when_catalog_model_is_missing(tmp_path: Path, monkeypatch) -> None:
     cfg = Config(home=tmp_path / "state")
     catalog = tmp_path / "catalog.json"
     catalog.write_text('{"models":[{"slug":"workbuddy/hy3"}]}', encoding="utf-8")
     cfg.codex_model_catalog = str(catalog)
     write_default_config(cfg)
     loaded = load_config(home=cfg.home)
+    # A running local gateway would legitimately satisfy missing routes via the
+    # live /models merge; pin that off so this test covers only the static path.
+    monkeypatch.setattr(Config, "_live_model_slugs", lambda self, gateway: None)
     service = LightWorkerService(loaded, TaskStore(loaded.db_path), None)  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="not present.*catalog"):
@@ -448,6 +451,26 @@ def test_workbuddy_route_fails_closed_when_catalog_model_is_missing(tmp_path: Pa
             "workspace": str(tmp_path),
             "model": "workbuddy/kimi-k3-1",
         })
+
+
+def test_live_models_merge_can_satisfy_missing_catalog_routes(tmp_path: Path, monkeypatch) -> None:
+    cfg = Config(home=tmp_path / "state")
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"models":[{"slug":"workbuddy/hy3"}]}', encoding="utf-8")
+    cfg.codex_model_catalog = str(catalog)
+    write_default_config(cfg)
+    loaded = load_config(home=cfg.home)
+    monkeypatch.setattr(
+        Config, "_live_model_slugs", lambda self, gateway: {"workbuddy/kimi-k3-1"}
+    )
+    service = LightWorkerService(loaded, TaskStore(loaded.db_path), None)  # type: ignore[arg-type]
+
+    task = service.delegate_task({
+        "objective": "route via the live model list when the static catalog lacks the model",
+        "workspace": str(tmp_path),
+        "model": "workbuddy/kimi-k3-1",
+    })
+    assert task["status"] in {"queued", "awaiting_approval"}
 
 
 def test_new_toml_parses_gateway_capabilities_and_provider_metadata(tmp_path: Path) -> None:
