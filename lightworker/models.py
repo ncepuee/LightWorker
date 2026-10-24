@@ -80,6 +80,7 @@ class RunResult:
     error: str | None = None
     exit_code: int | None = None
     result_path: str | None = None
+    session_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -133,6 +134,7 @@ def public_task(row: dict[str, Any]) -> dict[str, Any]:
         "finished_at",
         "pid",
         "native_thread_id",
+        "backend_session_id",
         "native_host_id",
         "native_lease_expires_at",
         "native_dispatch_attempts",

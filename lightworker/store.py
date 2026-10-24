@@ -8,7 +8,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from .cache import CACHE_WINDOW_MAX_SECONDS
 from .models import ACTIVE_STATUSES, TERMINAL_STATUSES, TaskSpec
@@ -196,6 +196,7 @@ class TaskStore:
             "native_lease_expires_at": "TEXT",
             "native_dispatch_attempts": "INTEGER NOT NULL DEFAULT 0",
             "native_last_state": "TEXT",
+            "backend_session_id": "TEXT",
         }
         for name, declaration in additions.items():
             if name not in existing:
@@ -847,6 +848,31 @@ class TaskStore:
         self._connection().execute("UPDATE tasks SET pid=? WHERE id=?", (pid, task_id))
         self.add_event(task_id, "worker.started", {"pid": pid})
 
+    def set_backend_session(self, task_id: str, session_id: str) -> bool:
+        """Persist the backend-reported session/thread id once per task.
+
+        Workers learn this id at different times (codex streams it in events,
+        ZCode only prints it in the final document). The first non-empty value
+        wins so the audit trail keeps a stable identifier.
+        """
+        session_id = str(session_id).strip()
+        if not session_id or len(session_id) > 256:
+            return False
+        cur = self._connection().execute(
+            "UPDATE tasks SET backend_session_id=? WHERE id=? AND (backend_session_id IS NULL OR backend_session_id='')",
+            (session_id, task_id),
+        )
+        if cur.rowcount:
+            self.add_event(task_id, "worker.session", {"session_id": session_id})
+        return bool(cur.rowcount)
+
+    def active_task_pids(self) -> list[dict[str, Any]]:
+        """Task id and pid for tasks believed to be executing."""
+        rows = self._connection().execute(
+            "SELECT id, pid FROM tasks WHERE status IN ('starting','running') AND pid IS NOT NULL"
+        ).fetchall()
+        return [{"id": str(row["id"]), "pid": int(row["pid"])} for row in rows]
+
     def stage_native_dispatch(self, task_id: str) -> bool:
         """Expose a claimed native task to the Codex-host bridge, never codex exec."""
         cur = self._connection().execute(
@@ -981,19 +1007,42 @@ class TaskStore:
             result.append(item)
         return result
 
-    def reconcile_after_restart(self) -> int:
+    def reconcile_after_restart(self, pid_alive: Callable[[int], bool] | None = None) -> int:
+        """Resolve tasks left active by a previous scheduler process.
+
+        With a ``pid_alive`` probe, a task whose worker process is still alive
+        keeps its running/starting status — its real state matches the backend —
+        and the scheduler reaper orphans it once that process eventually exits
+        without reporting a result. Without a probe (or for dead/unknown pids),
+        the task is orphaned immediately as before.
+        """
         with self.transaction(immediate=True) as conn:
             rows = conn.execute(
-                "SELECT id FROM tasks WHERE status IN ('starting','native_dispatching','running')"
+                "SELECT id, pid FROM tasks WHERE status IN ('starting','native_dispatching','running')"
             ).fetchall()
+            kept: list[str] = []
+            orphans: list[str] = []
             for row in rows:
+                pid = row["pid"]
+                if pid_alive is not None and pid is not None and pid_alive(int(pid)):
+                    kept.append(str(row["id"]))
+                else:
+                    orphans.append(str(row["id"]))
+            for task_id in kept:
+                conn.execute(
+                    "UPDATE tasks SET native_last_state=COALESCE(native_last_state, ?) WHERE id=?",
+                    ("worker_alive_after_restart", task_id),
+                )
+            for task_id in orphans:
                 conn.execute(
                     "UPDATE tasks SET status='orphaned',error=?,finished_at=? WHERE id=?",
-                    ("Runner restarted while task was active", utc_now(), row[0]),
+                    ("Runner restarted while task was active", utc_now(), task_id),
                 )
-        for row in rows:
-            self.add_event(str(row[0]), "task.orphaned", {})
-        return len(rows)
+        for task_id in kept:
+            self.add_event(task_id, "task.reconciled", {"reason": "worker_process_still_alive"})
+        for task_id in orphans:
+            self.add_event(str(task_id), "task.orphaned", {})
+        return len(orphans)
 
     def block_failed_dependencies(self) -> int:
         rows = self._connection().execute(

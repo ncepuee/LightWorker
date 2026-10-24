@@ -70,7 +70,7 @@ const I18N = {
     'detail.objective': '目标', 'detail.route': '路由审计', 'detail.governance': '预算与 Schema', 'detail.result': '结构化结果', 'detail.events': '事件时间线',
     'detail.waitingRoute': '等待调度…', 'detail.noRoute': '旧任务没有路由审计数据', 'detail.waitingWorker': '等待 Worker 返回…', 'detail.noEvents': '暂无事件',
     'meta.model': '模型', 'meta.provider': '提供方', 'meta.upstream': '上游', 'meta.gateway': '网关', 'meta.channel': '通道',
-    'meta.verified': '核验', 'meta.fallback': '备用', 'meta.profile': 'Profile',
+    'meta.verified': '核验', 'meta.fallback': '备用', 'meta.profile': 'Profile', 'meta.session': '会话',
     'action.approve': '批准当前权限范围', 'action.cancel': '取消任务', 'action.fallback': '改用 {gw} 重试', 'action.escalate': '升级到深度 Worker',
     'gw.connected': '已连接', 'gw.disconnected': '未连接', 'gw.absent': '未配置', 'gw.online': '在线', 'gw.offline': '离线',
     'gw.needGateway': '至少一个网关连接成功才能委派 Codex 任务',
@@ -149,7 +149,7 @@ const I18N = {
     'detail.objective': 'Objective', 'detail.route': 'Route Audit', 'detail.governance': 'Budget & Schema', 'detail.result': 'Structured Result', 'detail.events': 'Event Timeline',
     'detail.waitingRoute': 'Waiting to schedule…', 'detail.noRoute': 'Legacy task has no route audit data', 'detail.waitingWorker': 'Waiting for worker to return…', 'detail.noEvents': 'No events',
     'meta.model': 'Model', 'meta.provider': 'Provider', 'meta.upstream': 'Upstream', 'meta.gateway': 'Gateway', 'meta.channel': 'Channel',
-    'meta.verified': 'Verified', 'meta.fallback': 'Fallback', 'meta.profile': 'Profile',
+    'meta.verified': 'Verified', 'meta.fallback': 'Fallback', 'meta.profile': 'Profile', 'meta.session': 'Session',
     'action.approve': 'Approve current scope', 'action.cancel': 'Cancel task', 'action.fallback': 'Retry via {gw}', 'action.escalate': 'Escalate to deep Worker',
     'gw.connected': 'Connected', 'gw.disconnected': 'Disconnected', 'gw.absent': 'Not configured', 'gw.online': 'Online', 'gw.offline': 'Offline',
     'gw.needGateway': 'At least one gateway must be connected to delegate Codex tasks',
@@ -636,7 +636,8 @@ async function loadTask(taskId, silent = false) {
       task.provider && `${t('meta.provider')} ${task.provider}`, task.upstream_model && `${t('meta.upstream')} ${task.upstream_model}`,
       task.gateway && `${t('meta.gateway')} ${task.gateway}`, task.execution_channel && `${t('meta.channel')} ${task.execution_channel}`, protocol,
       task.route_audit && `${t('meta.verified')} ${task.route_audit.verification}`, task.fallback_gateway && `${t('meta.fallback')} ${task.fallback_gateway}`,
-      task.sandbox, fmtAbs(task.created_at), task.worktree_path].filter(Boolean).map((v) => `<span>${escapeHtml(v)}</span>`).join('');
+      task.sandbox, fmtAbs(task.created_at), task.worktree_path,
+      task.backend_session_id && `${t('meta.session')} ${task.backend_session_id}`, task.pid && `PID ${task.pid}`].filter(Boolean).map((v) => `<span>${escapeHtml(v)}</span>`).join('');
     const actions = [];
     if (task.status === 'awaiting_approval') actions.push(`<button class="btn approve" data-approve="${escapeHtml(task.id)}" data-approval-id="${escapeHtml(task.approval_id || '')}" data-scope-digest="${escapeHtml(task.approval_scope_digest || '')}">${t('action.approve')}</button>`);
     if (!['completed', 'failed', 'cancelled', 'blocked', 'orphaned'].includes(task.status)) actions.push(`<button class="btn danger" data-cancel="${escapeHtml(task.id)}">${t('action.cancel')}</button>`);

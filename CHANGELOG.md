@@ -1,11 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 - 开发中
 
-### Fixed
+### Added
 
-- macOS 现在同样零配置自动探测 ZCode 安装路径（Issue #7）：`find_default_zcode_cli_path()` 此前仅覆盖 Windows，导致已安装 `/Applications/ZCode.app`（或 `~/Applications/ZCode.app`，CLI 入口 `Contents/Resources/glm/zcode.cjs`）的 macOS 设备上 `doctor` 报告 `zcode_path: null`、`zcode_available: false`，提交 `--harness zcode` 任务失败 `ZCode command not found: zcode`。Windows 检测行为保持不变。
-- README / README_CN 的 macOS/Linux `LIGHTWORKER_HOME` 示例与 `default_home()` 实际默认值对齐（`XDG_DATA_HOME`，即 `~/.local/share/lightworker`，此前误写为 `XDG_STATE_HOME`/`~/.local/state`）。
+- 任务保存后端真实会话标识 `backend_session_id`：Codex 从 `thread.started`/`thread_id` 事件、ZCode 从 `--json` 文档的 `sessionId` 提取；事件流中出现即回写，任务结束时兜底落库，详情页与 API 公开展示。
+- 重启对账改为 pid 存活探测：scheduler 重启后，worker 进程仍存活的任务保持 running 并记录 `task.reconciled`（状态与后端一致），进程已死的任务才标记 orphaned。
+- 无主死进程收割：调度循环周期性检查不属于当前 scheduler 的 running/starting 任务，其 pid 已退出且无结果回写时标记 orphaned，消除「任务一直显示运行」。
+
+### Changed
+
+- `RunResult` 新增 `session_id` 字段；两个 Worker 实现均回传后端会话标识。
 
 ## 0.7.1 - 2026-08-31
 

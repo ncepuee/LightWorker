@@ -323,6 +323,41 @@ def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
                 pass
 
 
+def pid_alive(pid: int) -> bool:
+    """Best-effort liveness probe for a worker process pid.
+
+    Used by the scheduler to reconcile state after a restart and to reap
+    tasks whose owning scheduler died. On Windows a PID can be reused, so
+    this accepts a small false-positive window rather than adding heavier
+    process accounting — the task is only kept running, never resumed.
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return False
+            return exit_code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def normalize_text(value: str) -> str:
     lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     return "\n".join(line.rstrip() for line in lines).strip("\n")
@@ -542,6 +577,21 @@ def extract_observed_model(event: dict[str, Any]) -> str | None:
     return next((str(value) for value in candidates if isinstance(value, str) and value.strip()), None)
 
 
+def extract_session_id(event: dict[str, Any]) -> str | None:
+    """Best-effort backend session identifier from a worker stream event.
+
+    Codex emits ``thread.started`` with a ``thread_id``; ZCode documents carry
+    ``sessionId`` and some gateways use ``session_id``. Only shallow string
+    fields are considered — a missing id simply defers capture to a later
+    event, and callers persist the first value seen.
+    """
+    for key in ("thread_id", "session_id", "sessionId"):
+        value = event.get(key)
+        if isinstance(value, str) and 0 < len(value.strip()) <= 256:
+            return value.strip()
+    return None
+
+
 class CodexWorker:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -686,6 +736,7 @@ class CodexWorker:
             thread.start()
         started = time.monotonic()
         last_agent_message: str | None = None
+        session_id: str | None = None
         observed_model_sent = False
         observed_model_value: str | None = None
         cancelled = False
@@ -711,6 +762,8 @@ class CodexWorker:
                         continue
                     event_type = str(event.get("type", "worker.event"))
                     emit(event_type, event)
+                    if session_id is None:
+                        session_id = extract_session_id(event)
                     observed_model = extract_observed_model(event)
                     if observed_model and not observed_model_sent:
                         observed_model_value = observed_model
@@ -766,11 +819,11 @@ class CodexWorker:
             "retained": bool(raw_path),
         })
         if cancelled:
-            return RunResult(status="cancelled", error="Task was cancelled", exit_code=exit_code, result_path=raw_reference)
+            return RunResult(status="cancelled", error="Task was cancelled", exit_code=exit_code, result_path=raw_reference, session_id=session_id)
         if timed_out:
-            return RunResult(status="failed", error="Task timed out", exit_code=exit_code, result_path=raw_reference)
+            return RunResult(status="failed", error="Task timed out", exit_code=exit_code, result_path=raw_reference, session_id=session_id)
         if exit_code != 0:
-            return RunResult(status="failed", error=f"Codex exited with code {exit_code}", exit_code=exit_code, result_path=raw_reference)
+            return RunResult(status="failed", error=f"Codex exited with code {exit_code}", exit_code=exit_code, result_path=raw_reference, session_id=session_id)
         result = parse_json_candidate(raw)
         if result is None:
             if spec.kind != "plan" and raw.strip():
@@ -794,12 +847,12 @@ class CodexWorker:
                     status="completed",
                     result=result,
                     exit_code=exit_code,
-                    result_path=str(result_path),
+                    result_path=str(result_path), session_id=session_id,
                 )
             emit("worker.schema_invalid", {"schema_status": "invalid", "reason": "non_json"})
             return RunResult(
                 status="failed",
-                error="Final result did not contain a valid JSON object",
+                error="Final result did not contain a valid JSON object", session_id=session_id,
                 exit_code=exit_code,
                 result_path=raw_reference,
             )
@@ -813,7 +866,7 @@ class CodexWorker:
                 status="completed",
                 result=result,
                 exit_code=exit_code,
-                result_path=str(result_path),
+                result_path=str(result_path), session_id=session_id,
             )
 
         result = normalize_worker_result(result)
@@ -830,7 +883,7 @@ class CodexWorker:
             status="completed",
             result=result,
             exit_code=exit_code,
-            result_path=str(result_path),
+            result_path=str(result_path), session_id=session_id,
         )
 
 
@@ -957,6 +1010,7 @@ class ZCodeWorker:
         started = time.monotonic()
         result_text: str | None = None
         last_agent_message: str | None = None
+        session_id: str | None = None
         stdout_lines: list[str] = []
         cancelled = False
         timed_out = False
@@ -983,6 +1037,8 @@ class ZCodeWorker:
                     continue
                 event_type = str(event.get("type", "worker.event"))
                 emit(event_type, event)
+                if session_id is None:
+                    session_id = extract_session_id(event)
                 if event_type == "result" and isinstance(event.get("result"), str):
                     result_text = str(event["result"])
                 item = event.get("item")
@@ -1000,6 +1056,8 @@ class ZCodeWorker:
                     result_text = str(document["response"])
                 elif isinstance(document.get("result"), str):
                     result_text = str(document["result"])
+                if session_id is None and isinstance(document.get("sessionId"), str):
+                    session_id = str(document["sessionId"])
         raw = result_text or last_agent_message or ""
         safe_raw = redact_text(raw)
         if raw_path:
@@ -1013,9 +1071,9 @@ class ZCodeWorker:
             "retained": bool(raw_path),
         })
         if cancelled:
-            return RunResult(status="cancelled", error="Task was cancelled", exit_code=exit_code, result_path=raw_reference)
+            return RunResult(status="cancelled", error="Task was cancelled", exit_code=exit_code, result_path=raw_reference, session_id=session_id)
         if timed_out:
-            return RunResult(status="failed", error="Task timed out", exit_code=exit_code, result_path=raw_reference)
+            return RunResult(status="failed", error="Task timed out", exit_code=exit_code, result_path=raw_reference, session_id=session_id)
         if exit_code != 0:
             return RunResult(status="failed", error=f"ZCode exited with code {exit_code}", exit_code=exit_code, result_path=raw_reference)
         result = parse_json_candidate(raw)
@@ -1044,7 +1102,7 @@ class ZCodeWorker:
             status="completed",
             result=result,
             exit_code=exit_code,
-            result_path=str(result_path),
+            result_path=str(result_path), session_id=session_id,
         )
 
 
@@ -1073,9 +1131,20 @@ def _parse_zcode_document(text: str) -> dict[str, Any] | None:
 
 
 def _zcode_environment(cfg: Config) -> dict[str, str]:
-    """Least-privilege environment for the ZCode CLI (no gateway injection)."""
+    """Least-privilege environment for the ZCode CLI (no gateway injection).
+
+    ``ZCODE_*`` variables are passed through: the desktop app injects runtime
+    hints (built-in provider config location, tool paths, version pins) the
+    CLI needs to locate its own resources — ZCode 0.17+ exits with "无法定位
+    CLI ZCode Built-in Provider Config" without them. They carry paths and
+    build metadata, never credentials.
+    """
     allowed = {*_SAFE_WORKER_ENV, *(value.upper() for value in cfg.worker_env_allowlist)}
-    environment = {key: value for key, value in os.environ.items() if key.upper() in allowed}
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in allowed or key.upper().startswith("ZCODE_")
+    }
     environment.update({
         "PYTHONUTF8": "1",
         "PYTHONIOENCODING": "utf-8",

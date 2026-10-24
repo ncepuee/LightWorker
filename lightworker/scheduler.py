@@ -15,7 +15,7 @@ from .instance_lock import InstanceLock
 from .models import KNOWN_HARNESSES, RunResult, TaskSpec
 from .policy import PolicyError, topological_order, validate_plan, validate_task
 from .store import TaskStore
-from .worker import CodexWorker, build_worker
+from .worker import CodexWorker, build_worker, extract_session_id, pid_alive
 from .worktree import WorktreeError, create_worktree
 
 
@@ -59,7 +59,7 @@ class Scheduler:
             )
         self._owns_instance_lock = True
         if reconcile:
-            self.store.reconcile_after_restart()
+            self.store.reconcile_after_restart(pid_alive=pid_alive)
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="lightworker-scheduler", daemon=True)
         self._thread.start()
@@ -78,7 +78,7 @@ class Scheduler:
             if self._instance_lock.acquire():
                 self._owns_instance_lock = True
                 if reconcile:
-                    self.store.reconcile_after_restart()
+                    self.store.reconcile_after_restart(pid_alive=pid_alive)
                 self._loop()
                 return
             self._stop.wait(max(0.25, self.cfg.poll_interval_seconds))
@@ -106,6 +106,7 @@ class Scheduler:
         while not self._stop.is_set():
             self.store.block_failed_dependencies()
             self._collect_finished()
+            self._reap_unowned_dead_tasks()
             with self._lock:
                 available = self.cfg.max_concurrency - len(self._futures)
             if available > 0:
@@ -200,6 +201,28 @@ class Scheduler:
                 if row and row["status"] not in {"completed", "failed", "cancelled", "blocked"}:
                     self.store.update_status(task_id, "failed", error=f"Scheduler error: {exc}")
 
+    def _reap_unowned_dead_tasks(self) -> None:
+        """Orphan running tasks whose worker process died without a result.
+
+        Only tasks with no in-process future are considered — those belong to
+        a scheduler that died earlier (restart reconciliation kept them alive
+        while their backend process was still working). Live pids are left
+        untouched so the UI keeps reflecting the backend's real state.
+        """
+        with self._lock:
+            owned = set(self._futures)
+        try:
+            candidates = [entry for entry in self.store.active_task_pids() if entry["id"] not in owned]
+        except Exception:  # pragma: no cover - defensive: never break the loop
+            return
+        for entry in candidates:
+            if not pid_alive(entry["pid"]):
+                self.store.update_status(
+                    entry["id"],
+                    "orphaned",
+                    error="Worker process exited without reporting a result (scheduler restarted)",
+                )
+
     def _review_workspace(self, task_id: str, default: str) -> str:
         for dependency in self.store.dependencies(task_id):
             row = self.store.get_task(dependency)
@@ -257,6 +280,10 @@ class Scheduler:
 
             def on_event(event_type: str, payload: dict[str, Any]) -> None:
                 self.store.add_event(task_id, event_type, payload)
+                if isinstance(payload, dict):
+                    session = extract_session_id(payload)
+                    if session:
+                        self.store.set_backend_session(task_id, session)
 
             def on_pid(pid: int) -> None:
                 self.store.set_pid(task_id, pid)
@@ -295,6 +322,8 @@ class Scheduler:
             self.store.update_status(task_id, "failed", error=f"Worker error: {exc}")
 
     def _finish_task(self, task_id: str, spec: TaskSpec, result: RunResult) -> None:
+        if result.session_id:
+            self.store.set_backend_session(task_id, result.session_id)
         if result.status != "completed":
             self.store.update_status(
                 task_id,
