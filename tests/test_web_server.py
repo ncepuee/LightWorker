@@ -52,7 +52,7 @@ def request_json(url: str, method: str = "GET", token: str | None = None, body=N
 
 
 def test_web_health_static_and_mutation_token():
-    static_root = Path(__file__).resolve().parents[1] / "web"
+    static_root = Path(__file__).resolve().parents[1] / "lightworker" / "web"
     server = create_http_server("127.0.0.1", 0, FakeService(), "test-token", static_root)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

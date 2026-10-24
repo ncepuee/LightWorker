@@ -1,12 +1,16 @@
 # Changelog
 
-## 0.8.0 - 开发中
+## 0.8.0 - 2026-10-24
 
 ### Added
 
 - 任务保存后端真实会话标识 `backend_session_id`：Codex 从 `thread.started`/`thread_id` 事件、ZCode 从 `--json` 文档的 `sessionId` 提取；事件流中出现即回写，任务结束时兜底落库，详情页与 API 公开展示。
 - 重启对账改为 pid 存活探测：scheduler 重启后，worker 进程仍存活的任务保持 running 并记录 `task.reconciled`（状态与后端一致），进程已死的任务才标记 orphaned。
 - 无主死进程收割：调度循环周期性检查不属于当前 scheduler 的 running/starting 任务，其 pid 已退出且无结果回写时标记 orphaned，消除「任务一直显示运行」。
+
+### Fixed
+
+- **打包修复**：`schemas/` 与 `web/` 随包分发（移入 `lightworker` 包内并声明 package-data）——此前 wheel 安装缺少 Schema 与管理页资源，CLI 建任务与管理页均不可用；源码检出用户不受影响。
 
 ### Changed
 

@@ -272,7 +272,7 @@ def test_expand_plan_rejects_zcode_native_subagent_child(tmp_path: Path) -> None
 
 
 def test_plan_schema_declares_harness_enum() -> None:
-    schema = json.loads((REPO_ROOT / "schemas" / "plan.schema.json").read_text(encoding="utf-8"))
+    schema = json.loads((REPO_ROOT / "lightworker" / "schemas" / "plan.schema.json").read_text(encoding="utf-8"))
     harness = schema["properties"]["tasks"]["items"]["properties"]["harness"]
     assert sorted(harness["enum"]) == sorted(KNOWN_HARNESSES)
 

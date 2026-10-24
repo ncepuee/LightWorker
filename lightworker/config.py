@@ -337,7 +337,7 @@ class Config:
 
     @property
     def package_root(self) -> Path:
-        return Path(__file__).resolve().parent.parent
+        return Path(__file__).resolve().parent
 
     @property
     def schemas_dir(self) -> Path:
